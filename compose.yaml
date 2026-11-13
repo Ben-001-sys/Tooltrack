@@ -1,0 +1,28 @@
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: tooltrack-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tooltrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-tooltrack}
+
+    ports:
+      - "127.0.0.1:4583:4583"
+
+    volumes:
+      - tooltrack_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tooltrack_postgres_data:
