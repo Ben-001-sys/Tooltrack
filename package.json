@@ -8,5 +8,9 @@
         "dev:api": "pnpm --dir apps/api start:dev",
         "build:web": "pnpm --dir apps/web build",
         "build:api": "pnpm --dir apps/api build"
+    },
+    "devDependencies": {
+        "dotenv": "^18.0.10",
+        "prisma": "^7.10.1"
     }
 }
