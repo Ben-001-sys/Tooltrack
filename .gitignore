@@ -31,3 +31,5 @@ Thumbs.db
 # Local temporary files
 tmp/
 temp/
+
+apps/api/src/generated/prisma/

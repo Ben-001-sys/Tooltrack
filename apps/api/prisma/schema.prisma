@@ -1,0 +1,54 @@
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AccessType {
+  FREE
+  SUBSCRIPTION
+  LICENSED
+}
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tools Tool[]
+
+  @@map("categories")
+}
+
+model Tool {
+  id          String     @id @default(uuid()) @db.Uuid
+
+  //Scaler ID no FK
+  userId      String
+
+  name        String
+  description String?
+  websiteUrl  String?
+  accessType  AccessType
+
+  // Internal Tool Management relationship.
+  categoryId  String   @db.Uuid
+  category    Category @relation(fields: [categoryId],references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, accessType])
+  @@index([userId, categoryId])
+  @@index([userId, updatedAt])
+
+  @@map("tools")
+}
