@@ -22,8 +22,9 @@ function loadLocalEnvironment(): void {
 async function bootstrap(): Promise<void> {
   loadLocalEnvironment();
 
-  const app = await NestFactory.create(AppModule);
-
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: false
+  })
   app.enableShutdownHooks();
 
   const port = process.env.PORT
