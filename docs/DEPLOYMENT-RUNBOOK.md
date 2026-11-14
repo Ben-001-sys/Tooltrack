@@ -14,7 +14,7 @@ The public smoke script checks page, proxied health, anonymous Better Auth sessi
 
 1. Confirm reviewed staging acceptance, migration compatibility and intended functionality. Add the changelog version section before the candidate is staged.
 2. Merge a reviewed staging-to-main promotion and confirm its tree matches the accepted candidate.
-3. Run Release from main with version and candidate run ID; the other developer approves the release Environment. It verifies source and registry digests and creates a Git tag/manifest without rebuilding images.
+3. Run Release from main with version and candidate run ID; the other developer approves the release Environment. It verifies source and registry digests, signs the manifest using GitHub's OIDC attestation service, and publishes the manifest and Sigstore bundle as release assets without rebuilding images. Retain both assets and the original CI run. Signing/publishing failure must stop promotion; retry only after inspecting an existing tag and never move it to another source.
 4. Preserve the prior known-good manifest and verify an off-server backup and restore readiness. Record a non-secret backup ID and ISO verification timestamp.
 5. Dispatch Deploy production from main with release tag, explicit authorization checkbox, backup reference and timestamp. The other developer approves the production Environment after inspecting version, migrations and backup evidence. No production action occurs automatically on setup or push.
 6. Confirm resource identity, migrations, running image digests, HTTPS smoke and browser auth. Archive deployment-record.json with the release, update CURRENT-STATE.md, and retain previous images.

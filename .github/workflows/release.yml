@@ -25,6 +25,8 @@ jobs:
       contents: write
       actions: read
       packages: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -45,6 +47,16 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
         run: node deploy/scripts/create-release.mjs
+      - name: Sign the verified release manifest
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-manifest.json
+      - name: Publish version and durable signed evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: node deploy/scripts/publish-release.mjs
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

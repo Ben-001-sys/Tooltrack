@@ -21,7 +21,4 @@ const manifest = { ...candidate, version, tag, approvedSource: approved,
   releasedAt: new Date().toISOString(), changelog: `CHANGELOG.md#${version.replaceAll('.', '')}` };
 writeFileSync('release-manifest.json', JSON.stringify(manifest, null, 2));
 writeFileSync('release-notes.md', `Verified ToolTrack ${tag}\n\nSource: ${approved}\nCandidate: ${candidate.source}\nCI run: ${candidate.ciRunId}\nStaging: ${candidate.staging.url}\n\nSee the attached manifest for immutable image digests and migrations.\n\n${changelog}`);
-// Tag creation is non-forcing and fails if the version already exists.
-gh('api', 'repos/Ben-001-sys/Tooltrack/git/refs', '-f', `ref=refs/tags/${tag}`, '-f', `sha=${approved}`);
-gh('release', 'create', tag, '--repo', 'Ben-001-sys/Tooltrack', '--verify-tag', '--title', `ToolTrack ${tag}`,
-  '--notes-file', 'release-notes.md', 'release-manifest.json');
+console.log('PASS prepared release manifest; sign it before publishing');

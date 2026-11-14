@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateManifest } from './verify-release.mjs';
 
-export function loadCandidate(runId) {
+export function verifyCandidateRun(runId) {
   assert.match(String(runId), /^\d+$/);
   const repository = 'Ben-001-sys/Tooltrack';
   const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8' });
@@ -15,6 +15,13 @@ export function loadCandidate(runId) {
   assert.equal(run.head_branch, 'staging');
   assert.equal(run.head_repository.full_name, repository);
   assert.equal(run.conclusion, 'success');
+  return run;
+}
+
+export function loadCandidate(runId) {
+  const run = verifyCandidateRun(runId);
+  const repository = 'Ben-001-sys/Tooltrack';
+  const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8' });
   const directory = mkdtempSync(join(tmpdir(), 'tooltrack-candidate-'));
   try {
     gh('run', 'download', String(runId), '--repo', repository, '--name', 'accepted-candidate', '--dir', directory);
