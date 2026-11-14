@@ -52,6 +52,7 @@ jobs:
         run: |
           node deploy/scripts/verify-containers.mjs
           node deploy/scripts/verify-runtime-targets.mjs
+          node deploy/scripts/verify-migration-gate.mjs
       - name: Scan Web image
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:

@@ -67,6 +67,7 @@ docker build -f apps/api/Dockerfile -t tooltrack-api:verify .
 node --test deploy/tests/*.test.mjs
 node deploy/scripts/verify-containers.mjs
 node deploy/scripts/verify-runtime-targets.mjs
+node deploy/scripts/verify-migration-gate.mjs
 ```
 
 These scripts create only randomly named disposable test resources. Deployment uses `deploy/dokploy/compose.yaml`; the root compose file remains local-development configuration. Configure API_ORIGIN at web runtime and use the public HTTPS origin for WEB_ORIGIN and Better Auth. No staging or production deployment is enabled by default.
