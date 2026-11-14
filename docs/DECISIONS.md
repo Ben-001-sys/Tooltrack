@@ -13,6 +13,8 @@
 - PR validation runs with read-only permissions. Registry write credentials exist only on trusted push publishing jobs; deployment credentials exist only inside protected Environments. No workflow_run privilege escalation path is introduced.
 - Exact Git-tree equality bridges staging/main merge SHA differences. If any tracked source differs, artifacts cannot be promoted. Release evidence references immutable image digests and the validated staging CI run.
 - Production remains manual with peer approval and backup evidence. Automation enable flags default absent/disabled. No production release was authorized during setup.
+- The owners replaced Raw Compose source with Dokploy's official GitHub App integration. Source Type is GitHub, branches staging/main, Compose Path deploy/dokploy/compose.yaml, Auto Deploy OFF and Isolated Deployments ON. The App only grants source access. Owners perform all dashboard setup; no connector resource mutations/deployments are authorized.
+- The inspected Compose deploy API does not accept a commit pin. Use a manually installed immutable verifier command before Compose, not a branch-head-only check. It verifies actual cloned HEAD, approved source hash, generated Compose and image/env provenance; stale/racing revisions fail before migrations. Actions validates the exact command but never edits provider/command settings. Dokploy's generated titles are mutable, so acceptance correlates new deployment IDs and a unique non-secret source-proof marker.
 
 ## Future Option B migration
 

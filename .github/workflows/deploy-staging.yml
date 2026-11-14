@@ -46,6 +46,8 @@ jobs:
           DOKPLOY_ENVIRONMENT_ID: ${{ vars.DOKPLOY_ENVIRONMENT_ID }}
           DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
           DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_VERIFIER_IMAGE: ${{ vars.DOKPLOY_VERIFIER_IMAGE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMOKE_BASE_URL: ${{ vars.WEB_ORIGIN }}
         run: node deploy/scripts/dokploy-deploy.mjs candidate.json staging
       - if: success()
