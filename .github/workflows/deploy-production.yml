@@ -1,0 +1,77 @@
+name: Deploy production
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: Approved existing release tag
+        required: true
+        type: string
+      approve-production:
+        description: Explicitly authorize deploying this release to production
+        required: true
+        default: false
+        type: boolean
+      backup-reference:
+        description: Off-server backup identifier reviewed for this deployment (no credentials)
+        required: true
+        type: string
+      backup-verified-at:
+        description: ISO timestamp of backup verification within the past 24 hours
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.approve-production
+    environment: production
+    concurrency:
+      group: tooltrack-production
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify release and original staging acceptance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: node deploy/scripts/prepare-production.mjs
+      - name: Deploy the approved immutable images
+        env:
+          DEPLOY_ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
+          PRODUCTION_APPROVED: ${{ inputs.approve-production }}
+          BACKUP_REFERENCE: ${{ inputs.backup-reference }}
+          BACKUP_VERIFIED_AT: ${{ inputs.backup-verified-at }}
+          DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
+          DOKPLOY_PROJECT_ID: ${{ vars.DOKPLOY_PROJECT_ID }}
+          DOKPLOY_ENVIRONMENT_ID: ${{ vars.DOKPLOY_ENVIRONMENT_ID }}
+          DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_VERIFIER_IMAGE: ${{ vars.DOKPLOY_VERIFIER_IMAGE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SMOKE_BASE_URL: ${{ vars.WEB_ORIGIN }}
+        run: node deploy/scripts/dokploy-deploy.mjs release-manifest.json production
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-deployment
+          path: deployment-record.json
+          if-no-files-found: ignore
+          retention-days: 90

@@ -33,3 +33,11 @@ tmp/
 temp/
 
 apps/api/src/generated/prisma/
+
+# Generated release/deployment evidence is uploaded as workflow artifacts/assets.
+/candidate.json
+/accepted-candidate.json
+/release-manifest.json
+/release-manifest.sigstore.json
+/deployment-record.json
+/release-notes.md
