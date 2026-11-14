@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useRouter } from "next/navigation";
 
@@ -65,43 +65,13 @@ export default function ToolsPage() {
 
   const [categoryFilter, setCategoryFilter] = useState("ALL");
 
-  const loadData = useCallback(async (signal?: AbortSignal) => {
-    if (signal?.aborted) {
-      return;
-    }
+  const [reloadKey, setReloadKey] = useState(0);
 
-    try {
-      const [loadedCategories, loadedTools] = await Promise.all([
-        apiRequest<ToolCategory[]>("/api/v1/categories", { signal }),
-        apiRequest<Tool[]>("/api/v1/tools", { signal }),
-      ]);
-
-      if (signal?.aborted) {
-        return;
-      }
-
-      if (!Array.isArray(loadedCategories) || !Array.isArray(loadedTools)) {
-        throw new Error("The API returned an unexpected response.");
-      }
-
-      setCategories(loadedCategories);
-      setTools(loadedTools);
-    } catch (caughtError) {
-      if (signal?.aborted) {
-        return;
-      }
-
-      setLoadError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Unable to load your tools.",
-      );
-    } finally {
-      if (!signal?.aborted) {
-        setLoading(false);
-      }
-    }
-  }, []);
+  function refreshTools() {
+    setLoading(true);
+    setLoadError(null);
+    setReloadKey((current) => current + 1);
+  }
 
   useEffect(() => {
     if (!sessionPending && !userId && !sessionError) {
@@ -116,12 +86,48 @@ export default function ToolsPage() {
 
     const controller = new AbortController();
 
-    void loadData(controller.signal);
+    void Promise.all([
+      apiRequest<ToolCategory[]>("/api/v1/categories", {
+        signal: controller.signal,
+      }),
+      apiRequest<Tool[]>("/api/v1/tools", {
+        signal: controller.signal,
+      }),
+    ])
+      .then(([loadedCategories, loadedTools]) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (!Array.isArray(loadedCategories) || !Array.isArray(loadedTools)) {
+          throw new Error("The API returned an unexpected response.");
+        }
+
+        setCategories(loadedCategories);
+        setTools(loadedTools);
+        setLoadError(null);
+      })
+      .catch((caughtError: unknown) => {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setLoadError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Unable to load your tools.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      });
 
     return () => {
       controller.abort();
     };
-  }, [userId, loadData]);
+  }, [userId, reloadKey]);
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -362,11 +368,7 @@ export default function ToolsPage() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setLoading(true);
-                  setLoadError(null);
-                  void loadData();
-                }}
+                onClick={refreshTools}
                 className="mt-5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
               >
                 Try again
@@ -382,11 +384,7 @@ export default function ToolsPage() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setLoading(true);
-                    setLoadError(null);
-                    void loadData();
-                  }}
+                  onClick={refreshTools}
                   className="text-sm font-medium text-indigo-600 hover:underline"
                 >
                   Refresh
