@@ -52,6 +52,7 @@ jobs:
         run: |
           node deploy/scripts/verify-containers.mjs
           node deploy/scripts/verify-runtime-targets.mjs
+          node deploy/scripts/verify-migration-gate.mjs
       - name: Scan Web image
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
@@ -80,7 +81,8 @@ jobs:
             image="ghcr.io/ben-001-sys/tooltrack-$app"
             docker tag "tooltrack-$app:verify" "$image:sha-$GITHUB_SHA"
             docker push "$image:sha-$GITHUB_SHA"
-            digest=$(docker inspect "$image:sha-$GITHUB_SHA" --format '{{index .RepoDigests 0}}')
+            digest=$(docker inspect "$image:sha-$GITHUB_SHA" --format '{{json .RepoDigests}}' |
+              jq -er --arg image "$image" '[.[] | select(startswith($image + "@sha256:"))] | if length == 1 then .[0] else error("Expected one GHCR digest") end')
             echo "$app-image=$digest" >> "$GITHUB_OUTPUT"
           done
       - name: Record candidate provenance

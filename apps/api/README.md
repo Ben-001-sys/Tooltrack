@@ -1,3 +1,11 @@
+# ToolTrack API
+
+Use the repository's Node 24 pin in `.node-version` and pnpm 11.5.3. Install once from the repository root with `pnpm install --frozen-lockfile`; the root lockfile is authoritative. Configure the root `.env` from `.env.example`, start local PostgreSQL, and run `pnpm prisma:generate`, `pnpm db:deploy`, then `pnpm dev:api` from the root. See the [root README](../../README.md) and [current state](../../CURRENT-STATE.md).
+
+Root verification commands are `pnpm build:api`, `pnpm lint`, `pnpm typecheck`, and `pnpm test`. Integration tests use `pnpm --dir apps/api test:e2e` after compilation and require `TEST_DATABASE_URL` pointing to a disposable migrated database. They create test users; never target staging or production. The compiled API remains responsible for Better Auth sessions and authorization.
+
+ToolTrack deployment uses the approved [GitHub/Dokploy runbook](../../docs/DEPLOYMENT-RUNBOOK.md). The framework reference below is inherited scaffolding; its Mau/Observe examples are not configured ToolTrack services or an alternative deployment policy.
+
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>

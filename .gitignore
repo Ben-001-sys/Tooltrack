@@ -38,5 +38,6 @@ apps/api/src/generated/prisma/
 /candidate.json
 /accepted-candidate.json
 /release-manifest.json
+/release-manifest.sigstore.json
 /deployment-record.json
 /release-notes.md
