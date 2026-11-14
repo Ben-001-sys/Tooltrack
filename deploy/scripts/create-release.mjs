@@ -7,12 +7,12 @@ import { verifySource } from './verify-release.mjs';
 assert.equal(process.env.GITHUB_REF, 'refs/heads/main', 'Release workflow must run from protected main');
 const version = process.env.RELEASE_VERSION;
 assert.match(version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/);
+assert.equal(JSON.parse(readFileSync('package.json', 'utf8')).version, version, 'Release the reviewed declared project version');
 const candidate = loadCandidate(process.env.CANDIDATE_RUN_ID);
 const approved = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 verifySource(candidate, approved);
 const changelog = readFileSync('CHANGELOG.md', 'utf8');
 assert.ok(changelog.includes(`## [${version}]`), 'Add a reviewed changelog version section before staging acceptance');
-const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8' });
 for (const image of Object.values(candidate.images)) {
   execFileSync('docker', ['buildx', 'imagetools', 'inspect', image], { stdio: 'inherit' });
 }

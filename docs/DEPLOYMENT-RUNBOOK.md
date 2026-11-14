@@ -21,7 +21,7 @@ The public smoke script checks page, proxied health, anonymous Better Auth sessi
 
 ## Failure and recovery
 
-Stop further promotions on any failure. GitHub marks the job failed; deployment-record.json contains pending or passed state and prior image references. Pending is not success. Preserve Actions logs and the corresponding Dokploy deployment logs. The adapter intentionally does not emit raw API responses containing environment secrets. There is no automatic application/database rollback while the live infrastructure remains unverified.
+Stop further promotions on any failure. GitHub marks the job failed; deployment-record.json records failed state, timestamp and any captured prior image references. A pending record is not success. Preserve Actions logs and the corresponding Dokploy deployment logs. The adapter intentionally does not emit raw API responses containing environment secrets. There is no automatic application/database rollback while the live infrastructure remains unverified.
 
 For application rollback, inspect schema compatibility first. Restore the previous verified WEB_IMAGE and API_IMAGE digests in the same resource while preserving every other setting, and redeploy under the same approval policy. Never roll migrations backward automatically. If the previous application cannot read the new schema, maintain service isolation and create a reviewed forward fix or use an explicitly approved restore/cutover plan. Do not delete volumes. A failed migration may require DBA review and a deliberately documented `prisma migrate resolve`; never mark it resolved merely to clear CI.
 
