@@ -1,0 +1,62 @@
+name: Deploy staging
+on:
+  workflow_call:
+    inputs:
+      web-image:
+        type: string
+        required: true
+      api-image:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    concurrency:
+      group: tooltrack-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: candidate
+      - name: Verify candidate belongs to this exact run
+        env:
+          WEB_IMAGE: ${{ inputs.web-image }}
+          API_IMAGE: ${{ inputs.api-image }}
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs"; import assert from "node:assert/strict";
+            const c=JSON.parse(fs.readFileSync("candidate.json"));
+            assert.equal(c.source,process.env.GITHUB_SHA); assert.equal(c.ciRunId,Number(process.env.GITHUB_RUN_ID));
+            assert.equal(c.images.web,process.env.WEB_IMAGE); assert.equal(c.images.api,process.env.API_IMAGE);'
+      - name: Deploy and require HTTPS acceptance
+        env:
+          DEPLOY_ENABLED: ${{ vars.STAGING_DEPLOY_ENABLED }}
+          DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
+          DOKPLOY_PROJECT_ID: ${{ vars.DOKPLOY_PROJECT_ID }}
+          DOKPLOY_ENVIRONMENT_ID: ${{ vars.DOKPLOY_ENVIRONMENT_ID }}
+          DOKPLOY_COMPOSE_ID: ${{ vars.DOKPLOY_COMPOSE_ID }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          SMOKE_BASE_URL: ${{ vars.WEB_ORIGIN }}
+        run: node deploy/scripts/dokploy-deploy.mjs candidate.json staging
+      - if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: accepted-candidate
+          path: accepted-candidate.json
+          retention-days: 90
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-deployment
+          path: deployment-record.json
+          if-no-files-found: ignore
+          retention-days: 90

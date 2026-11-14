@@ -1,0 +1,96 @@
+name: Build and verify images
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        required: true
+    outputs:
+      web-image:
+        value: ${{ jobs.images.outputs.web-image }}
+      api-image:
+        value: ${{ jobs.images.outputs.api-image }}
+# Permissions are inherited from CI: PR validation is read-only; push publishing
+# receives packages:write only in the caller's dedicated publish job.
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      web-image: ${{ steps.publish.outputs.web-image }}
+      api-image: ${{ steps.publish.outputs.api-image }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: .node-version
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          load: true
+          tags: tooltrack-web:verify
+          labels: |
+            org.opencontainers.image.source=https://github.com/Ben-001-sys/Tooltrack
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          load: true
+          tags: tooltrack-api:verify
+          labels: |
+            org.opencontainers.image.source=https://github.com/Ben-001-sys/Tooltrack
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Verify the exact images before publishing
+        run: |
+          node deploy/scripts/verify-containers.mjs
+          node deploy/scripts/verify-runtime-targets.mjs
+      - name: Scan Web image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: v0.76.2
+          image-ref: tooltrack-web:verify
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        with:
+          version: v0.76.2
+          image-ref: tooltrack-api:verify
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - if: inputs.publish && github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested images and capture registry digests
+        id: publish
+        if: inputs.publish && github.event_name == 'push' && (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main')
+        run: |
+          for app in web api; do
+            image="ghcr.io/ben-001-sys/tooltrack-$app"
+            docker tag "tooltrack-$app:verify" "$image:sha-$GITHUB_SHA"
+            docker push "$image:sha-$GITHUB_SHA"
+            digest=$(docker inspect "$image:sha-$GITHUB_SHA" --format '{{index .RepoDigests 0}}')
+            echo "$app-image=$digest" >> "$GITHUB_OUTPUT"
+          done
+      - name: Record candidate provenance
+        if: steps.publish.outcome == 'success'
+        env:
+          WEB_IMAGE: ${{ steps.publish.outputs.web-image }}
+          API_IMAGE: ${{ steps.publish.outputs.api-image }}
+        run: node deploy/scripts/create-candidate.mjs
+      - if: steps.publish.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate
+          path: candidate.json
+          retention-days: 90
