@@ -24,6 +24,14 @@ function compose(args, options) { return docker([...composeArgs, ...args], optio
 try {
   compose(['config', '--quiet']);
   compose(['up', '-d', '--wait', '--wait-timeout', '180'], { stdio: 'inherit' });
+  const apiContainer = compose(['ps', '-q', 'api']).trim();
+  const postgresContainer = compose(['ps', '-q', 'postgres']).trim();
+  for (const id of [apiContainer, postgresContainer]) {
+    const published = JSON.parse(docker(['inspect', id, '--format', '{{json .NetworkSettings.Ports}}']));
+    assert.ok(Object.values(published ?? {}).every(value => value === null), 'Private services must not publish ports');
+  }
+  assert.equal(docker(['inspect', apiContainer, '--format', '{{.Config.User}}']).trim(), 'node');
+  assert.equal(docker(['network', 'inspect', `${project}_database`, '--format', '{{.Internal}}']).trim(), 'true');
   const port = compose(['port', 'web', '3000']).trim().split(':').at(-1);
   const base = `http://127.0.0.1:${port}`;
   await smokeTest(base, { allowHttp: true });
@@ -41,7 +49,9 @@ try {
   }
   await auth('sign-up/email', { email, password: userPassword, name: 'Disposable test' });
   assert.equal((await fetch(`${base}/api/v1/session`, { headers: { cookie } })).status, 200);
+  const revokedCookie = cookie;
   await auth('sign-out', {});
+  assert.equal((await fetch(`${base}/api/v1/session`, { headers: { cookie: revokedCookie } })).status, 401);
   cookie = '';
   assert.equal((await fetch(`${base}/api/v1/session`)).status, 401);
   await auth('sign-in/email', { email, password: userPassword });
