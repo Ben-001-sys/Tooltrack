@@ -8,7 +8,11 @@ The latest owner decision supersedes the initial Raw Compose setup: use Dokploy'
 
 The repository adapter validates those exact settings and the immutable verifier command, rejects advanced branch heads, patches only image references and three non-secret source/hash/nonce fields, preserves unrelated environment text, and requires actual checkout/effective-Compose/digest proof from the newly created deployment. The verifier runs before Compose with read-only mounts and no network. GitHub Actions retains CI/GHCR/deployment control; approval and backup gates are unchanged. GitHub branch movement after queueing is rejected before migrations.
 
-Nine repository-side tests pass, including real Git checkout/tamper tests and fully mocked deployment API orchestration (no Dokploy connection). Frozen install, actionlint and high-severity dependency audit pass; one moderate development advisory remains. The verifier reuses locked js-yaml 4.3.2 and adds Git to the API image. Its rebuilt Docker execution/runtime/scan checks are in progress; earlier image IDs and scan results below are the prior baseline and do not claim verification of this modified image. Installed Dokploy-version compatibility and live execution await owner setup.
+Ten repository-side tests pass, including real Git checkout/tamper tests, staging-versus-approved-main provenance, mocked deployment orchestration, environment preservation and approval/backup rejection (no Dokploy connection). Frozen install, lint/types, six API unit tests, actionlint and high-severity dependency audit pass; one moderate development advisory remains. The verifier reuses locked js-yaml 4.3.2 and adds Git to the API image without upgrading application dependencies.
+
+The rebuilt API/verifier image passed its real read-only/network-disabled Docker test, including rejection of a modified effective Compose file without secret output. Full application startup, Prisma/migrations/auth/logout revocation, restart, persistence, backup/restore and migration-failure sequencing passed again. Trivy 0.76.2 reports zero HIGH/CRITICAL findings after adding Git. Local verified API image ID: `sha256:e9d548beaf2c391920bee69174a63b8c60b76c60f77a9968fb80c416ad96e814` (not a published GHCR digest). Installed Dokploy-version compatibility and live execution await owner setup; no live resource verification is claimed.
+
+Focused review branch: `chore/dokploy-github-source`, [PR #13](https://github.com/Ben-001-sys/Tooltrack/pull/13), stacked after release/operations PR #12. The preceding release/operations CI passed in [run 43590063036](https://github.com/Ben-001-sys/Tooltrack/actions/runs/43590063036); the new PR has its own required CI and Security checks. Review and merge this update before any Dokploy setup or enabling deployment, because it supersedes the initial source configuration.
 
 ## Starting repository audit
 
@@ -25,7 +29,7 @@ Nine repository-side tests pass, including real Git checkout/tamper tests and fu
 
 ## Work in progress
 
-Review stack (none merged):
+Review stack (none merged; followed by GitHub-source PR #13 described above):
 
 1. [PR #8: readiness](https://github.com/Ben-001-sys/Tooltrack/pull/8), `chore/ci-repository-readiness`, base staging.
 2. [PR #9: runtime proxy](https://github.com/Ben-001-sys/Tooltrack/pull/9), `chore/runtime-api-proxy`, base readiness branch.
