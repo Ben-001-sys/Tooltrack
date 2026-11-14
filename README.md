@@ -26,12 +26,23 @@ Foreign keys are allowed within a module, but not between independently owned mo
 Required tools:
 
 - Node.js 24
-- pnpm 10
+- pnpm 11.5.3 (pinned in the root manifest)
 - Git
 
-After both applications have been initialized and their dependencies installed:
+Run installation from the repository root; `pnpm-lock.yaml` is authoritative. The legacy web lockfile is retained because it contains existing developer changes; do not install independently in `apps/web`.
+
+Copy `.env.example` to `.env`, set local-only credentials, then run:
 
 ```powershell
+pnpm install --frozen-lockfile
+docker compose up -d
+pnpm prisma:generate
+pnpm db:deploy
+pnpm prisma:validate
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
 pnpm dev:web
 pnpm dev:api
 ```

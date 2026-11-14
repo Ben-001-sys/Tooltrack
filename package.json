@@ -2,12 +2,22 @@
     "name": "tooltrack",
     "version": "0.1.0",
     "private": true,
+    "packageManager": "pnpm@11.5.3",
+    "engines": { "node": ">=24.13.0 <25", "pnpm": "11.5.3" },
     "description": "Tooltrack - Tool and Subscription Manager",
     "scripts": {
         "dev:web": "pnpm  --dir apps/web dev",
         "dev:api": "pnpm --dir apps/api start:dev",
         "build:web": "pnpm --dir apps/web build",
-        "build:api": "pnpm --dir apps/api build"
+        "build:api": "pnpm --dir apps/api build",
+        "build": "pnpm build:api && pnpm build:web",
+        "lint": "pnpm --dir apps/api lint && pnpm --dir apps/web lint",
+        "typecheck": "pnpm --dir apps/api exec tsc --noEmit && pnpm --dir apps/web exec next typegen && pnpm --dir apps/web exec tsc --noEmit",
+        "test": "pnpm --dir apps/api test && node --test deploy/tests/*.test.mjs",
+        "prisma:validate": "pnpm --dir apps/api exec prisma validate",
+        "prisma:generate": "pnpm --dir apps/api exec prisma generate",
+        "db:deploy": "pnpm --dir apps/api exec prisma migrate deploy",
+        "db:status": "pnpm --dir apps/api exec prisma migrate status"
     },
     "devDependencies": {
         "dotenv": "^18.0.10",
