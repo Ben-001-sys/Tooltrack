@@ -1,11 +1,6 @@
-
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useState,
-} from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useRouter } from "next/navigation";
 
@@ -55,96 +50,69 @@ export default function ToolsPage() {
   const userId = session?.user.id;
 
   const [tools, setTools] = useState<Tool[]>([]);
-  const [categories, setCategories] = useState<
-    ToolCategory[]
-  >([]);
+  const [categories, setCategories] = useState<ToolCategory[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<
-    string | null
-  >(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [actionError, setActionError] = useState<
-    string | null
-  >(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [signingOut, setSigningOut] = useState(false);
-  const [showAddModal, setShowAddModal] =
-    useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const [search, setSearch] = useState("");
-  const [accessFilter, setAccessFilter] =
-    useState<AccessFilter>("ALL");
+  const [accessFilter, setAccessFilter] = useState<AccessFilter>("ALL");
 
-  const [categoryFilter, setCategoryFilter] =
-    useState("ALL");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
 
-  const loadData = useCallback(
-    async (signal?: AbortSignal) => {
-      setLoading(true);
-      setLoadError(null);
+  const loadData = useCallback(async (signal?: AbortSignal) => {
+    await Promise.resolve();
 
-      try {
-        const [loadedCategories, loadedTools] =
-          await Promise.all([
-            apiRequest<ToolCategory[]>(
-              "/api/v1/categories",
-              { signal },
-            ),
-            apiRequest<Tool[]>(
-              "/api/v1/tools",
-              { signal },
-            ),
-          ]);
+    if (signal?.aborted) {
+      return;
+    }
 
-        if (signal?.aborted) {
-          return;
-        }
+    setLoading(true);
+    setLoadError(null);
 
-        if (
-          !Array.isArray(loadedCategories) ||
-          !Array.isArray(loadedTools)
-        ) {
-          throw new Error(
-            "The API returned an unexpected response.",
-          );
-        }
+    try {
+      const [loadedCategories, loadedTools] = await Promise.all([
+        apiRequest<ToolCategory[]>("/api/v1/categories", { signal }),
+        apiRequest<Tool[]>("/api/v1/tools", { signal }),
+      ]);
 
-        setCategories(loadedCategories);
-        setTools(loadedTools);
-      } catch (caughtError) {
-        if (signal?.aborted) {
-          return;
-        }
-
-        setLoadError(
-          caughtError instanceof Error
-            ? caughtError.message
-            : "Unable to load your tools.",
-        );
-      } finally {
-        if (!signal?.aborted) {
-          setLoading(false);
-        }
+      if (signal?.aborted) {
+        return;
       }
-    },
-    [],
-  );
+
+      if (!Array.isArray(loadedCategories) || !Array.isArray(loadedTools)) {
+        throw new Error("The API returned an unexpected response.");
+      }
+
+      setCategories(loadedCategories);
+      setTools(loadedTools);
+    } catch (caughtError) {
+      if (signal?.aborted) {
+        return;
+      }
+
+      setLoadError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Unable to load your tools.",
+      );
+    } finally {
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    if (
-      !sessionPending &&
-      !userId &&
-      !sessionError
-    ) {
+    if (!sessionPending && !userId && !sessionError) {
       router.replace("/login");
     }
-  }, [
-    sessionPending,
-    userId,
-    sessionError,
-    router,
-  ]);
+  }, [sessionPending, userId, sessionError, router]);
 
   useEffect(() => {
     if (!userId) {
@@ -168,10 +136,7 @@ export default function ToolsPage() {
       const result = await authClient.signOut();
 
       if (result.error) {
-        throw new Error(
-          result.error.message ??
-            "Unable to sign out.",
-        );
+        throw new Error(result.error.message ?? "Unable to sign out.");
       }
 
       setTools([]);
@@ -193,9 +158,7 @@ export default function ToolsPage() {
   function handleCreated(tool: Tool) {
     setTools((current) => [
       tool,
-      ...current.filter(
-        (existing) => existing.id !== tool.id,
-      ),
+      ...current.filter((existing) => existing.id !== tool.id),
     ]);
 
     setShowAddModal(false);
@@ -207,32 +170,21 @@ export default function ToolsPage() {
     const matchesSearch =
       !searchTerm ||
       tool.name.toLowerCase().includes(searchTerm) ||
-      (tool.description ?? "")
-        .toLowerCase()
-        .includes(searchTerm);
+      (tool.description ?? "").toLowerCase().includes(searchTerm);
 
     const matchesAccess =
-      accessFilter === "ALL" ||
-      tool.accessType === accessFilter;
+      accessFilter === "ALL" || tool.accessType === accessFilter;
 
     const matchesCategory =
-      categoryFilter === "ALL" ||
-      tool.categoryId === categoryFilter;
+      categoryFilter === "ALL" || tool.categoryId === categoryFilter;
 
-    return (
-      matchesSearch &&
-      matchesAccess &&
-      matchesCategory
-    );
+    return matchesSearch && matchesAccess && matchesCategory;
   });
 
   if (sessionPending || (!session && !sessionError)) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50">
-        <p
-          role="status"
-          className="text-sm text-slate-600"
-        >
+        <p role="status" className="text-sm text-slate-600">
           Checking authentication...
         </p>
       </main>
@@ -247,10 +199,7 @@ export default function ToolsPage() {
             Unable to verify your session
           </h1>
 
-          <p
-            role="alert"
-            className="mt-3 text-sm text-red-600"
-          >
+          <p role="alert" className="mt-3 text-sm text-red-600">
             {sessionError.message}
           </p>
 
@@ -277,9 +226,7 @@ export default function ToolsPage() {
               ToolTrack
             </p>
 
-            <p className="text-xs text-slate-500">
-              Software Tool Manager
-            </p>
+            <p className="text-xs text-slate-500">Software Tool Manager</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -293,9 +240,7 @@ export default function ToolsPage() {
               disabled={signingOut}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
-              {signingOut
-                ? "Signing out..."
-                : "Sign out"}
+              {signingOut ? "Signing out..." : "Sign out"}
             </button>
           </div>
         </div>
@@ -309,18 +254,14 @@ export default function ToolsPage() {
             </h1>
 
             <p className="mt-2 text-sm text-slate-500">
-              Organize and manage your software
-              tools in one place.
+              Organize and manage your software tools in one place.
             </p>
           </div>
 
           <button
             type="button"
             onClick={() => setShowAddModal(true)}
-            disabled={
-              loading ||
-              categories.length === 0
-            }
+            disabled={loading || categories.length === 0}
             className="rounded-lg bg-indigo-600 px-5 py-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Add Tool
@@ -345,12 +286,8 @@ export default function ToolsPage() {
               <button
                 key={filter.value}
                 type="button"
-                onClick={() =>
-                  setAccessFilter(filter.value)
-                }
-                aria-pressed={
-                  accessFilter === filter.value
-                }
+                onClick={() => setAccessFilter(filter.value)}
+                aria-pressed={accessFilter === filter.value}
                 className={
                   accessFilter === filter.value
                     ? "rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white"
@@ -364,10 +301,7 @@ export default function ToolsPage() {
 
           <div className="mt-5 grid gap-3 md:grid-cols-[1fr_240px]">
             <div>
-              <label
-                htmlFor="tool-search"
-                className="sr-only"
-              >
+              <label htmlFor="tool-search" className="sr-only">
                 Search tools
               </label>
 
@@ -375,39 +309,27 @@ export default function ToolsPage() {
                 id="tool-search"
                 type="search"
                 value={search}
-                onChange={(event) =>
-                  setSearch(event.target.value)
-                }
+                onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search tools..."
                 className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
               />
             </div>
 
             <div>
-              <label
-                htmlFor="category-filter"
-                className="sr-only"
-              >
+              <label htmlFor="category-filter" className="sr-only">
                 Filter by category
               </label>
 
               <select
                 id="category-filter"
                 value={categoryFilter}
-                onChange={(event) =>
-                  setCategoryFilter(event.target.value)
-                }
+                onChange={(event) => setCategoryFilter(event.target.value)}
                 className="w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
               >
-                <option value="ALL">
-                  All Categories
-                </option>
+                <option value="ALL">All Categories</option>
 
                 {categories.map((category) => (
-                  <option
-                    key={category.id}
-                    value={category.id}
-                  >
+                  <option key={category.id} value={category.id}>
                     {category.name}
                   </option>
                 ))}
@@ -416,16 +338,10 @@ export default function ToolsPage() {
           </div>
         </section>
 
-        <section
-          aria-label="Saved software tools"
-          className="mt-8"
-        >
+        <section aria-label="Saved software tools" className="mt-8">
           {loading ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center">
-              <p
-                role="status"
-                className="text-sm text-slate-500"
-              >
+              <p role="status" className="text-sm text-slate-500">
                 Loading your tools...
               </p>
             </div>
@@ -435,10 +351,7 @@ export default function ToolsPage() {
                 Unable to load tools
               </h2>
 
-              <p
-                role="alert"
-                className="mt-2 text-sm text-red-600"
-              >
+              <p role="alert" className="mt-2 text-sm text-red-600">
                 {loadError}
               </p>
 
@@ -456,15 +369,8 @@ export default function ToolsPage() {
             <>
               <div className="mb-5 flex items-center justify-between gap-3">
                 <p className="text-sm text-slate-600">
-                  Showing{" "}
-                  <strong>
-                    {filteredTools.length}
-                  </strong>{" "}
-                  of{" "}
-                  <strong>
-                    {tools.length}
-                  </strong>{" "}
-                  loaded tools
+                  Showing <strong>{filteredTools.length}</strong> of{" "}
+                  <strong>{tools.length}</strong> loaded tools
                 </p>
 
                 <button
@@ -481,9 +387,7 @@ export default function ToolsPage() {
               {filteredTools.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-16 text-center">
                   <h2 className="text-lg font-semibold text-slate-900">
-                    {tools.length === 0
-                      ? "No tools yet"
-                      : "No matching tools"}
+                    {tools.length === 0 ? "No tools yet" : "No matching tools"}
                   </h2>
 
                   <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
@@ -495,12 +399,8 @@ export default function ToolsPage() {
                   {tools.length === 0 && (
                     <button
                       type="button"
-                      onClick={() =>
-                        setShowAddModal(true)
-                      }
-                      disabled={
-                        categories.length === 0
-                      }
+                      onClick={() => setShowAddModal(true)}
+                      disabled={categories.length === 0}
                       className="mt-6 rounded-lg bg-indigo-600 px-5 py-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                     >
                       Add your first tool
@@ -510,10 +410,7 @@ export default function ToolsPage() {
               ) : (
                 <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                   {filteredTools.map((tool) => (
-                    <ToolCard
-                      key={tool.id}
-                      tool={tool}
-                    />
+                    <ToolCard key={tool.id} tool={tool} />
                   ))}
                 </div>
               )}
