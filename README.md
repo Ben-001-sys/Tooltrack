@@ -68,9 +68,10 @@ node --test deploy/tests/*.test.mjs
 node deploy/scripts/verify-containers.mjs
 node deploy/scripts/verify-runtime-targets.mjs
 node deploy/scripts/verify-migration-gate.mjs
+node deploy/scripts/verify-checkout-container.mjs
 ```
 
-These scripts create only randomly named disposable test resources. Deployment uses `deploy/dokploy/compose.yaml`; the root compose file remains local-development configuration. Configure API_ORIGIN at web runtime and use the public HTTPS origin for WEB_ORIGIN and Better Auth. No staging or production deployment is enabled by default.
+These scripts create only randomly named disposable test resources. Dokploy reads `deploy/dokploy/compose.yaml` through its official GitHub App, with Auto Deploy OFF; Actions alone controls deployment. Owners manually configure the dashboard and guarded command described in the setup guide. The root compose file remains local-development configuration. Configure API_ORIGIN at web runtime and use the public HTTPS origin for WEB_ORIGIN and Better Auth. No staging or production deployment is enabled by default.
 
 ## Project scope
 

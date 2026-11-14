@@ -2,6 +2,14 @@
 
 Updated 2026-11-14. No release or deployment has been claimed or performed.
 
+## GitHub-backed Dokploy update
+
+The latest owner decision supersedes the initial Raw Compose setup: use Dokploy's official GitHub App for source access, repository Ben-001-sys/Tooltrack, staging/main branches and `deploy/dokploy/compose.yaml`, Docker Compose, Auto Deploy OFF, Isolated Deployments ON. Owners manually configure the App, Project, Environments, resources, domains, secrets, registry access and guarded command. No connector resource creation, modification or deployment is authorized or performed for this update.
+
+The repository adapter validates those exact settings and the immutable verifier command, rejects advanced branch heads, patches only image references and three non-secret source/hash/nonce fields, preserves unrelated environment text, and requires actual checkout/effective-Compose/digest proof from the newly created deployment. The verifier runs before Compose with read-only mounts and no network. GitHub Actions retains CI/GHCR/deployment control; approval and backup gates are unchanged. GitHub branch movement after queueing is rejected before migrations.
+
+Nine repository-side tests pass, including real Git checkout/tamper tests and fully mocked deployment API orchestration (no Dokploy connection). Frozen install, actionlint and high-severity dependency audit pass; one moderate development advisory remains. The verifier reuses locked js-yaml 4.3.2 and adds Git to the API image. Its rebuilt Docker execution/runtime/scan checks are in progress; earlier image IDs and scan results below are the prior baseline and do not claim verification of this modified image. Installed Dokploy-version compatibility and live execution await owner setup.
+
 ## Starting repository audit
 
 - Repository: https://github.com/Ben-001-sys/Tooltrack (public); default branch `main`.
@@ -62,10 +70,10 @@ GitHub changes performed: created staging at the audited baseline; protected mai
 | Main required-check configuration | PASSED | Read back strict CI/security checks plus review protections; admin emergency bypass documented |
 | Staging required-check activation | BLOCKED | Owner review/merge of bootstrap workflow PRs required first |
 | GHCR publication / pull by digest | BLOCKED | Publishing requires reviewed merge to staging/main; PR jobs do not publish |
-| Dokploy staging | BLOCKED | Connector: DNS ENOTFOUND for configured admin hostname |
+| Dokploy staging | BLOCKED | Owner performs GitHub App/resource/command/HTTPS setup and installed-version compatibility checks manually |
 | Production | BLOCKED | Requires configured environment, backups and explicit human approval |
 
-Final local Web image ID: `sha256:001d62c9abd64d8ae168fcf2f81819aacf8995887952bcf60ceb4eb97fb30c81`. Final local API image ID: `sha256:8672132e080f3c63cb5770c4905871b6652d773eb212039c66d234b610a81c63`. These are local verification artifacts, not published GHCR digests or release candidates.
+Prior-baseline local Web image ID: `sha256:001d62c9abd64d8ae168fcf2f81819aacf8995887952bcf60ceb4eb97fb30c81`. Prior-baseline local API image ID: `sha256:8672132e080f3c63cb5770c4905871b6652d773eb212039c66d234b610a81c63`. These are local verification artifacts, not published GHCR digests or release candidates. The GitHub-backed source-verifier update changes the API image and requires fresh verification.
 
 Additional evidence: 6 API unit tests; 2 compiled API integration tests; 4 Node transport/deployment/manifest/tree tests; frozen installation after both security overrides; backend oxlint, frontend ESLint and typechecks; Prisma validate/generate/migrate deploy/status; actionlint 1.7.12; full disposable Compose lifecycle and binary-safe restore. Initial Windows Next/Turbopack failure remains reproducible/documented; Linux builds pass without changing Tailwind dependencies. All random Compose test resources are removed by their test scripts. The separately created disposable CI database is removed after verification; no real database was reset, overwritten or migrated.
 
@@ -74,8 +82,8 @@ Signed release manifest/bundle generation and verification are implemented using
 ## HUMAN ACTION REQUIRED
 
 1. GitHub: Emmanuel reviews PRs #8–#12 in order. Retarget stacked PRs to staging after each predecessor merges and inspect the resulting diff. No PR has been merged by this implementation. After the workflow bootstrap is merged, apply `deploy/github/branch-protection.json` to staging and verify checks block an intentionally failing PR.
-2. Dokploy/DNS: restore the configured connector hostname `admin.benuel.dedyn.io` or reconnect the correct instance. The read-only project query failed with ENOTFOUND twice. Return only connection confirmation, server version, resource IDs and public origins; keep credentials in protected stores.
-3. Dokploy/GHCR/GitHub Environments: complete `docs/DOKPLOY-SETUP.md` with independent secrets, isolated resource networks/volumes, registry pull access, HTTPS, protected environment variables and scoped API keys. Verify live API response shapes, migration failure propagation and actual running digests before enabling staging flags.
+2. Dokploy: owners manually authorize the official GitHub App and configure the GitHub-backed resources per docs/DOKPLOY-SETUP.md. The earlier DNS failures are historical audit evidence; connector access is not requested or used for this update. Return only server version, resource IDs/App Names, verifier digests, public origins and non-secret setup evidence. Keep credentials in protected stores.
+3. Dokploy/GHCR/GitHub Environments: complete `docs/DOKPLOY-SETUP.md` with independent secrets, isolated networks/volumes, registry pull access, HTTPS, the manually installed generated guard command and DOKPLOY_VERIFIER_IMAGE. Verify installed-version behavior, source/digest proof, migration failure propagation and actual running digests before enabling staging flags. The App's push Auto Deploy remains OFF; Actions alone initiates authorized deployments.
 4. Staging/server: verify browser registration/login/session/logout, Secure/HttpOnly/SameSite cookies and CSRF over HTTPS. Configure off-server encrypted backups, test restoration and monitoring/notifications. Supply non-secret run links and backup verification references afterward.
 5. Release/production: add the reviewed version changelog section and satisfy acceptance, then approve the first release and any production deployment explicitly. This has production consequences; setup alone is not deployment authorization.
 

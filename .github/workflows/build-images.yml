@@ -21,10 +21,13 @@ jobs:
       api-image: ${{ steps.publish.outputs.api-image }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version-file: .node-version
           package-manager-cache: false
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -53,6 +56,7 @@ jobs:
           node deploy/scripts/verify-containers.mjs
           node deploy/scripts/verify-runtime-targets.mjs
           node deploy/scripts/verify-migration-gate.mjs
+          node deploy/scripts/verify-checkout-container.mjs
       - name: Scan Web image
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
