@@ -6,13 +6,13 @@ import { parseEnv } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import { COMPOSE_PATH, patchDeploymentEnvironment, sha256, sourceMarker, validateGithubResource } from './github-compose-policy.mjs';
 
-export function approvedSource(manifest, target) {
+export function approvedSource(manifest, target, execute = execFileSync) {
   const revision = target === 'production' ? manifest.approvedSource : manifest.source;
   assert.match(revision, /^[a-f0-9]{40}$/);
   const branch = target === 'production' ? 'main' : 'staging';
-  const ref = JSON.parse(execFileSync('gh', ['api', `repos/Ben-001-sys/Tooltrack/git/ref/heads/${branch}`], { encoding: 'utf8' }));
+  const ref = JSON.parse(execute('gh', ['api', `repos/Ben-001-sys/Tooltrack/git/ref/heads/${branch}`], { encoding: 'utf8' }));
   assert.equal(ref.object.sha, revision, 'Branch advanced; obtain a candidate/release for its current approved revision');
-  const source = execFileSync('git', ['show', `${revision}:${COMPOSE_PATH}`]);
+  const source = execute('git', ['show', `${revision}:${COMPOSE_PATH}`]);
   assert.ok(source.length > 0 && source.length < 1024 * 1024);
   return { revision, composeHash: sha256(source) };
 }
@@ -70,8 +70,7 @@ export async function deploy(manifest, target, dependencies = {}) {
   assert.ok(Array.isArray(before), 'Unexpected deployment API shape');
   assert.ok(!before.some(item => ['running', 'queued'].includes(item.status)), 'Another deployment is active');
   const images = patchDeploymentEnvironment(resource.env, manifest.images, proof);
-  const previous = {};
-  for (const name of ['WEB_IMAGE', 'API_IMAGE']) previous[name] = resource.env.match(new RegExp(`^${name}=(.*)$`, 'm'))?.[1]?.trim();
+  const previous = { WEB_IMAGE: configuration.WEB_IMAGE, API_IMAGE: configuration.API_IMAGE };
   write('deployment-record.json', JSON.stringify({ target, source: manifest.source, composeRevision: proof.revision,
     composeSha256: proof.composeHash, nonce: proof.nonce,
     images: manifest.images, previous, status: 'pending', startedAt: new Date().toISOString() }, null, 2));

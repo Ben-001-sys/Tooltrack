@@ -1,11 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseEnv } from 'node:util';
-import { deploy } from '../scripts/dokploy-deploy.mjs';
+import { approvedSource, deploy } from '../scripts/dokploy-deploy.mjs';
 import { guardedCommand, patchDeploymentEnvironment, sourceMarker, validateGithubResource } from '../scripts/github-compose-policy.mjs';
 const images = { web: `ghcr.io/ben-001-sys/tooltrack-web@sha256:${'c'.repeat(64)}`,
   api: `ghcr.io/ben-001-sys/tooltrack-api@sha256:${'d'.repeat(64)}` };
 const proof = { revision: 'a'.repeat(40), composeHash: 'b'.repeat(64), nonce: crypto.randomUUID() };
+test('branch preflight uses staging candidate or approved main revision and rejects a moving head', () => {
+  const manifest = { source: 'a'.repeat(40), approvedSource: 'b'.repeat(40) };
+  for (const target of ['staging', 'production']) {
+    const expected = target === 'staging' ? manifest.source : manifest.approvedSource;
+    const execute = (command, args) => {
+      if (command === 'gh') { assert.ok(args[1].endsWith(target === 'staging' ? '/staging' : '/main')); return JSON.stringify({ object: { sha: expected } }); }
+      assert.deepEqual(args, ['show', `${expected}:deploy/dokploy/compose.yaml`]);
+      return Buffer.from('approved compose source');
+    };
+    assert.equal(approvedSource(manifest, target, execute).revision, expected);
+    let gitCalled = false;
+    assert.throws(() => approvedSource(manifest, target, command => {
+      if (command === 'git') gitCalled = true;
+      return JSON.stringify({ object: { sha: 'f'.repeat(40) } });
+    }), /Branch advanced/);
+    assert.equal(gitCalled, false);
+  }
+});
 test('image updates preserve every unrelated environment assignment and reject ambiguous keys', () => {
   const input = '# keep\nWEB_IMAGE=old-web\nPOSTGRES_PASSWORD=private-value\nAPI_IMAGE=old-api\nOTHER="keep me"\n';
   const patched = patchDeploymentEnvironment(input, images, proof);
