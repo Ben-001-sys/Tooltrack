@@ -100,5 +100,11 @@ export async function deploy(manifest, target) {
 
 if (process.argv[1]?.endsWith('dokploy-deploy.mjs')) {
   try { await deploy(JSON.parse(readFileSync(process.argv[2], 'utf8')), process.argv[3]); }
-  catch { console.error('Deployment failed. Inspect deployment-record.json and Dokploy deployment logs. No automatic database rollback was attempted.'); process.exitCode = 1; }
+  catch {
+    let record = {};
+    try { record = JSON.parse(readFileSync('deployment-record.json', 'utf8')); } catch { /* failure before mutation */ }
+    writeFileSync('deployment-record.json', JSON.stringify({ ...record, status: 'failed', failedAt: new Date().toISOString() }, null, 2));
+    console.error('Deployment failed. Inspect deployment-record.json and Dokploy deployment logs. No automatic database rollback was attempted.');
+    process.exitCode = 1;
+  }
 }
