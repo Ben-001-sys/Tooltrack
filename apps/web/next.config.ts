@@ -1,23 +1,9 @@
 import type { NextConfig } from "next";
-
-const apiOrigin = (
-  process.env.INTERNAL_API_URL ??
-  "http://127.0.0.1:3001"
-).replace(/\/+$/, "");
+import path from "node:path";
 
 const nextConfig: NextConfig = {
-  async rewrites() {
-    return [
-      {
-        source: "/api/auth/:path*",
-        destination: `${apiOrigin}/api/auth/:path*`,
-      },
-      {
-        source: "/api/v1/:path*",
-        destination: `${apiOrigin}/api/v1/:path*`,
-      },
-    ];
-  },
+  output: "standalone",
+  outputFileTracingRoot: path.resolve(import.meta.dirname, "../.."),
   
   cacheComponents: true,
   partialPrefetching: true,
