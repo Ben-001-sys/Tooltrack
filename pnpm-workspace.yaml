@@ -3,6 +3,7 @@ packages:
   - "packages/*"
 allowBuilds:
   '@prisma/engines': true
+  esbuild: true
   prisma: true
 overrides:
   '@nestjs/mau>undici': 6.29.1
