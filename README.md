@@ -57,6 +57,20 @@ The frontend will use port 3000 and the backend will use port 3001.
 - Both developers work across the full stack.
 - Rotate implementation and review responsibilities.
 
+Read [CURRENT-STATE.md](CURRENT-STATE.md) for verified progress and blockers. Features target staging after bootstrap; reviewed promotions target main. See [development/release policy](docs/DEVELOPMENT-RELEASE-POLICY.md), [pipeline architecture](docs/CI-CD-ARCHITECTURE.md), [Dokploy setup](docs/DOKPLOY-SETUP.md), [deployment runbook](docs/DEPLOYMENT-RUNBOOK.md), and [backup/restore](docs/BACKUP-RESTORE.md).
+
+Container verification from the repository root (requires a running Docker engine):
+
+```powershell
+docker build -f apps/web/Dockerfile -t tooltrack-web:verify .
+docker build -f apps/api/Dockerfile -t tooltrack-api:verify .
+node --test deploy/tests/*.test.mjs
+node deploy/scripts/verify-containers.mjs
+node deploy/scripts/verify-runtime-targets.mjs
+```
+
+These scripts create only randomly named disposable test resources. Deployment uses `deploy/dokploy/compose.yaml`; the root compose file remains local-development configuration. Configure API_ORIGIN at web runtime and use the public HTTPS origin for WEB_ORIGIN and Better Auth. No staging or production deployment is enabled by default.
+
 ## Project scope
 
 The initial MVP includes authentication, tool management, predefined categories, search and filtering.

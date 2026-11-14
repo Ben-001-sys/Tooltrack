@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { loadCandidate } from './load-candidate.mjs';
+import { validateManifest, verifySource } from './verify-release.mjs';
+
+const version = process.env.RELEASE_TAG;
+assert.match(version, /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/);
+assert.equal(process.env.GITHUB_REF, 'refs/heads/main');
+const gh = (...args) => execFileSync('gh', args, { encoding: 'utf8' });
+gh('release', 'download', version, '--repo', 'Ben-001-sys/Tooltrack', '--pattern', 'release-manifest.json');
+const manifest = validateManifest(JSON.parse(readFileSync('release-manifest.json', 'utf8')), { accepted: true });
+assert.equal(manifest.tag, version);
+const candidate = loadCandidate(manifest.ciRunId);
+assert.deepEqual(manifest.images, candidate.images);
+assert.deepEqual(manifest.staging, candidate.staging);
+assert.equal(manifest.source, candidate.source);
+assert.equal(manifest.tree, candidate.tree);
+const tagCommit = execFileSync('git', ['rev-parse', `${version}^{commit}`], { encoding: 'utf8' }).trim();
+assert.equal(tagCommit, manifest.approvedSource);
+verifySource(manifest, tagCommit);
+for (const image of Object.values(manifest.images)) execFileSync('docker', ['buildx', 'imagetools', 'inspect', image], { stdio: 'inherit' });
+console.log('PASS production release tag, candidate provenance, source and registry digests');

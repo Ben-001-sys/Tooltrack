@@ -1,0 +1,19 @@
+# Implementation decisions
+
+- Keep Option A: separate Web/API images, one ordinary Compose resource per environment, private PostgreSQL. No Swarm or service extraction.
+- Pin pnpm 11.5.3, matching the installed toolchain and web declaration. Root lockfile frozen install works. Preserve the edited nested web lockfile; reconcile/remove it only in a separately reviewed cleanup after its owner resolves existing changes.
+- Preserve Next.js Cache Components/Tailwind configuration. Linux standalone build succeeds; the Windows Turbopack CSS worker failure is environmental and remains documented. No speculative Tailwind dependency replacement.
+- Runtime Route Handlers replace build-time rewrites. API_ORIGIN and public origin remain container configuration; image reuse against two targets is tested.
+- Keep generated Prisma configuration/import format because the compiled runtime actually loads and container auth succeeds. No ORM migration or schema rewrite is needed.
+- Make Better Auth origin and CSRF checks explicitly enabled. Its installed package otherwise defaults origin checks off in test environments; production-style tests must not inherit that exception.
+- Retain Prisma tooling in the initial API image for one-off migration reuse. This trades image size and dependency surface for a simple verified migration entry point; improve with a separately tested migration target later.
+- Replace the initial Node 24.13.0 Debian image after Trivy reported 54 high/critical OS findings and 30 findings in bundled Node tools. Use the verified official Node 24.22.3 Alpine manifest pinned by digest, align CI's Node patch pin, and remove unused npm/yarn from runtime stages. This is a documented runtime security update, not an application dependency upgrade. Rebuild and revalidate Prisma/migrations/auth under musl before accepting it.
+- Scope the `@nestjs/mau>undici` override to 6.29.1. The existing deployment helper resolved a vulnerable 6.x version with eight high-severity advisories. The [reviewed advisory](https://github.com/advisories/GHSA-qrxm-fqhp-jwvm) identifies 6.29.1 as patched. No application dependency major is changed; rerun frozen install, audit, builds and tests after the lockfile change.
+- Scope `external-editor>tmp` to 0.2.7. The helper's original tmp 0.0.33 is vulnerable to path traversal; 0.2.6 has a subsequent type-confusion bypass, so the override uses the audit's patched 0.2.7. Both updates are confined to the helper dependency chain and are recorded in the root lockfile.
+- PR validation runs with read-only permissions. Registry write credentials exist only on trusted push publishing jobs; deployment credentials exist only inside protected Environments. No workflow_run privilege escalation path is introduced.
+- Exact Git-tree equality bridges staging/main merge SHA differences. If any tracked source differs, artifacts cannot be promoted. Release evidence references immutable image digests and the validated staging CI run.
+- Production remains manual with peer approval and backup evidence. Automation enable flags default absent/disabled. No production release was authorized during setup.
+
+## Future Option B migration
+
+Reuse the same images in separate Dokploy Web and API Application resources and a managed PostgreSQL Database resource. Provision private server connectivity/TLS/firewalls first. Move PostgreSQL through verified backup, isolated restore, write reconciliation and approved cutover; preserve schema history. Configure the API database URL and public Better Auth origin, then set Web API_ORIGIN to the private API endpoint at runtime. Validate cookies, origin/CSRF, proxy health and failure behavior. Move services independently only when their networking and deployment ordering are proven. Add load balancing or Swarm through a later architecture decision; do not promise zero downtime without a tested design.
