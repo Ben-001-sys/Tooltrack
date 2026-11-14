@@ -66,14 +66,9 @@ export default function ToolsPage() {
   const [categoryFilter, setCategoryFilter] = useState("ALL");
 
   const loadData = useCallback(async (signal?: AbortSignal) => {
-    await Promise.resolve();
-
     if (signal?.aborted) {
       return;
     }
-
-    setLoading(true);
-    setLoadError(null);
 
     try {
       const [loadedCategories, loadedTools] = await Promise.all([
@@ -181,7 +176,7 @@ export default function ToolsPage() {
     return matchesSearch && matchesAccess && matchesCategory;
   });
 
-  if (sessionPending || (!session && !sessionError)) {
+  if (sessionPending) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50">
         <p role="status" className="text-sm text-slate-600">
@@ -213,6 +208,16 @@ export default function ToolsPage() {
             Try again
           </button>
         </section>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-50">
+        <p role="status" className="text-sm text-slate-600">
+          Redirecting to login...
+        </p>
       </main>
     );
   }
@@ -358,6 +363,8 @@ export default function ToolsPage() {
               <button
                 type="button"
                 onClick={() => {
+                  setLoading(true);
+                  setLoadError(null);
                   void loadData();
                 }}
                 className="mt-5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
@@ -376,6 +383,8 @@ export default function ToolsPage() {
                 <button
                   type="button"
                   onClick={() => {
+                    setLoading(true);
+                    setLoadError(null);
                     void loadData();
                   }}
                   className="text-sm font-medium text-indigo-600 hover:underline"
