@@ -58,7 +58,9 @@ describe('compiled API against disposable PostgreSQL', () => {
     const session = await fetch(`${base}/api/v1/session`, { headers: { cookie } });
     expect(session.status).toBe(200);
     expect(await session.json()).toMatchObject({ authenticated: true, user: { email } });
+    const revokedCookie = cookie;
     expect((await post('sign-out', {})).ok).toBe(true);
+    expect((await fetch(`${base}/api/v1/session`, { headers: { cookie: revokedCookie } })).status).toBe(401);
     cookie = '';
     expect((await fetch(`${base}/api/v1/session`)).status).toBe(401);
     expect((await post('sign-in/email', { email, password })).ok).toBe(true);
