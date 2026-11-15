@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Read CURRENT-STATE.md first. There is no verified live ToolTrack deployment or official release yet. Application functionality currently includes registration, backend auth/session endpoints and health; Tool CRUD, ownership filtering and dashboard acceptance are future work. Existing developer login UI is outside the implementation commits until its owner reviews it.
+Read CURRENT-STATE.md first and reconcile its historical notes with the latest merged commits. Source on staging now includes registration, backend auth/session endpoints, health, and Tool create/list functionality with frontend search/filtering. Live acceptance of those features and the first GitHub-controlled staging deployment still require recorded evidence; the dashboard remains future work. No official release has been published.
 
 ## Staging
 
@@ -11,6 +11,20 @@ Before any Compose startup, the pinned verifier image checks Dokploy's actual cl
 Migrations then run once through the Compose migrate service, never in each API replica. Only committed `prisma migrate deploy` runs. PostgreSQL health, migration completion, API health and web health are distinct gates. Queue acceptance alone is insufficient. Dokploy replaces GitHub deployment titles with commit messages, so the adapter identifies the new deployment ID rather than relying on its title, rejects competing deployments, and requires its unique verification proof before HTTPS smoke acceptance. Logs containing any secrets are never copied into Actions output. Inspect actual running image digests during the initial manually supervised setup before enabling automation.
 
 The public smoke script checks page, proxied health, anonymous Better Auth session and unauthorized protected access. It does not create users on public deployments. Run browser authentication and secure-cookie checks with dedicated provisioned staging accounts before marking initial staging acceptance complete. The automated container suite covers the full auth lifecycle on disposable data. Public browser/TLS verification is separately recorded in CURRENT-STATE.md.
+
+## First reviewed GitHub-controlled staging deployment
+
+Use a small, legitimate, reviewed PR to validate the complete delivery path. A documentation-only PR can exercise the CI and deployment infrastructure, but does not prove the new application features work in a browser. Do not merge solely to bypass checks or force a deployment.
+
+1. One developer opens a PR targeting `staging`; the other developer reviews and approves it. Require `CI required`, `dependencies`, and `secrets-and-config` to pass before merging. Confirm branch protection in GitHub Settings; a requested reviewer is not itself proof that approval is enforced.
+2. Confirm Dokploy's **actual App Name** (generated resource identifier), the `APP_NAME` environment value, `TOOLTRACK_APP_NAME` in the Advanced Command, and the Compose `-p` project name all match exactly. Do not infer that identifier from the display name or an older resource. Check that the existing PostgreSQL container/volume belongs to the intended Compose project before changing project identity.
+3. Confirm the GitHub `staging` Environment has the current Project/Environment/Compose IDs, `DOKPLOY_VERIFIER_IMAGE`, `WEB_ORIGIN`, and the scoped `DOKPLOY_API_KEY` secret. Confirm both the repository and Environment `STAGING_DEPLOY_ENABLED` variables are `true` only after readiness checks. Keep Dokploy's own Auto Deploy OFF.
+4. Generate the Dokploy Advanced Command with `node deploy/scripts/dokploy-command.mjs ACTUAL_DOKPLOY_APP_NAME VERIFIED_API_DIGEST` and install the unmodified output. Dokploy prepends `docker`; do not prepend it in the saved command. Keep the verifier and its read-only mounts intact.
+5. **Do not click Deploy directly in Dokploy to test this guarded path.** The GitHub Actions adapter in `deploy/scripts/dokploy-deploy.mjs` first writes `TOOLTRACK_SOURCE_REVISION`, `TOOLTRACK_COMPOSE_SHA256`, and `TOOLTRACK_DEPLOYMENT_NONCE` into the resource environment. A manual deployment can be rejected because the approved source/nonce values are absent or stale.
+6. After merging the approved PR, observe the new `staging` push workflow: required CI, image verification/scans, GHCR publication, `candidate` artifact, then the protected staging deployment. Verify the checkout marker `TOOLTRACK_SOURCE_VERIFIED` appears for that specific deployment, Compose completes, HTTPS smoke tests pass, and the `accepted-candidate` artifact is uploaded.
+7. Record the GitHub run URL, Git commit SHA, image digests, Dokploy deployment ID, HTTPS outcome, and non-secret database volume identity in `CURRENT-STATE.md`. Keep the deployment record and logs for troubleshooting.
+
+If checkout verification fails, **stop** and investigate the actual App Name, current branch head, generated Compose, `APP_NAME`, pinned image digests, and reserved authorization fields without exposing secrets. Never disable the verifier, invent authorization values, change project names casually, delete volumes, or mark a failed attempt as accepted.
 
 ## Release and production
 
