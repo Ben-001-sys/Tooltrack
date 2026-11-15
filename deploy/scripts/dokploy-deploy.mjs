@@ -23,6 +23,8 @@ export async function deploy(manifest, target, dependencies = {}) {
   const read = dependencies.read ?? readFileSync;
   const smoke = dependencies.smoke ?? smokeTest;
   const log = dependencies.log ?? console.log;
+  const checkpoint = message => log(`DEPLOYMENT_CHECKPOINT ${target}: ${message}`);
+  checkpoint('validating manifest and deployment enablement');
   validateManifest(manifest, { accepted: target === 'production' });
   assert.ok(['staging', 'production'].includes(target));
   const required = name => { assert.ok(environmentValues[name], `Missing ${name}`); return environmentValues[name]; };
@@ -33,6 +35,7 @@ export async function deploy(manifest, target, dependencies = {}) {
     assert.ok(Date.now() - backupTime >= 0 && Date.now() - backupTime < 24 * 3600_000, 'Require a backup verified in the past 24 hours');
     required('BACKUP_REFERENCE');
   }
+  checkpoint('validating protected environment configuration');
   const base = new URL(required('DOKPLOY_URL'));
   assert.equal(base.protocol, 'https:');
   const key = required('DOKPLOY_API_KEY');
@@ -48,14 +51,17 @@ export async function deploy(manifest, target, dependencies = {}) {
     assert.ok(response.ok, `Dokploy ${path}: HTTP ${response.status}`);
     return response.json(); // never log raw responses: they can contain secrets
   });
+  checkpoint('reading Dokploy Compose, environment and project metadata');
   const resource = await api('compose.one', undefined, { composeId });
   const environment = await api('environment.one', undefined, { environmentId });
   const project = await api('project.one', undefined, { projectId });
+  checkpoint('checking Dokploy resource identity and guarded command');
   assert.equal(project.name, 'ToolTrack');
   assert.equal(resource.environmentId, environmentId);
   assert.equal(environment.projectId, projectId);
   assert.equal(environment.name, target);
   validateGithubResource(resource, target, required('DOKPLOY_VERIFIER_IMAGE'));
+  checkpoint('checking resource environment and database identity');
   const configuration = parseEnv(resource.env ?? '');
   assert.equal(configuration.WEB_ORIGIN, new URL(required('SMOKE_BASE_URL')).origin);
   const database = new URL(configuration.DATABASE_URL);
@@ -65,21 +71,26 @@ export async function deploy(manifest, target, dependencies = {}) {
   assert.equal(decodeURIComponent(database.password), configuration.POSTGRES_PASSWORD);
   // GitHub ref preflight rejects stale jobs. The immutable server-side verifier
   // checks the actual checkout again after Dokploy clones it, closing that race.
+  checkpoint('checking approved branch head and Compose source');
   const proof = { ...(dependencies.approvedSource ?? approvedSource)(manifest, target), nonce: crypto.randomUUID() };
+  checkpoint('checking for existing active deployments');
   const before = await api('deployment.allByCompose', undefined, { composeId });
   assert.ok(Array.isArray(before), 'Unexpected deployment API shape');
   assert.ok(!before.some(item => ['running', 'queued'].includes(item.status)), 'Another deployment is active');
+  checkpoint('preparing immutable images and authorization without changing server state');
   const images = patchDeploymentEnvironment(resource.env, manifest.images, proof);
   const previous = { WEB_IMAGE: configuration.WEB_IMAGE, API_IMAGE: configuration.API_IMAGE };
   write('deployment-record.json', JSON.stringify({ target, source: manifest.source, composeRevision: proof.revision,
     composeSha256: proof.composeHash, nonce: proof.nonce,
     images: manifest.images, previous, status: 'pending', startedAt: new Date().toISOString() }, null, 2));
+  checkpoint('saving authorized deployment environment');
   await api('compose.saveEnvironment', { composeId, env: images, createEnvFile: true });
   // Detect concurrent dashboard edits before asking Dokploy to deploy.
   const saved = await api('compose.one', undefined, { composeId });
   assert.equal(saved.env, images, 'Environment changed concurrently; stop and reconcile');
   validateGithubResource(saved, target, required('DOKPLOY_VERIFIER_IMAGE'));
   const title = `tooltrack-${target}-${manifest.source}-${crypto.randomUUID().slice(0, 8)}`;
+  checkpoint('requesting authorized Compose deployment');
   await api('compose.deploy', { composeId, title, description: `Verified revision ${manifest.source}`, freshVolumes: false });
   let deployment;
   const knownIds = new Set(before.map(item => item.deploymentId));
