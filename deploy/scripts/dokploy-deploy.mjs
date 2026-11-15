@@ -4,7 +4,7 @@ import { smokeTest } from './smoke-test.mjs';
 import { validateManifest } from './verify-release.mjs';
 import { parseEnv } from 'node:util';
 import { execFileSync } from 'node:child_process';
-import { COMPOSE_PATH, patchDeploymentEnvironment, sha256, sourceMarker, validateGithubResource } from './github-compose-policy.mjs';
+import { COMPOSE_PATH, patchDeploymentEnvironment, requireResourceCondition, SafeResourceValidationError, sha256, sourceMarker, validateGithubResource } from './github-compose-policy.mjs';
 
 export function approvedSource(manifest, target, execute = execFileSync) {
   const revision = target === 'production' ? manifest.approvedSource : manifest.source;
@@ -56,10 +56,10 @@ export async function deploy(manifest, target, dependencies = {}) {
   const environment = await api('environment.one', undefined, { environmentId });
   const project = await api('project.one', undefined, { projectId });
   checkpoint('checking Dokploy resource identity and guarded command');
-  assert.equal(project.name, 'ToolTrack');
-  assert.equal(resource.environmentId, environmentId);
-  assert.equal(environment.projectId, projectId);
-  assert.equal(environment.name, target);
+  requireResourceCondition(project.name === 'ToolTrack', 'project.name');
+  requireResourceCondition(resource.environmentId === environmentId, 'resource.environmentId');
+  requireResourceCondition(environment.projectId === projectId, 'environment.projectId');
+  requireResourceCondition(environment.name === target, 'environment.name');
   validateGithubResource(resource, target, required('DOKPLOY_VERIFIER_IMAGE'));
   checkpoint('checking resource environment and database identity');
   const configuration = parseEnv(resource.env ?? '');
@@ -122,13 +122,20 @@ export async function deploy(manifest, target, dependencies = {}) {
   log(`PASS ${target} Dokploy deployment and HTTPS smoke checks`);
 }
 
+// Field-only diagnostic for policy mismatches; untrusted API responses, errors and
+// environment values are never printed to CI logs.
+export function safeDeploymentFailureMessage(error) {
+  if (error instanceof SafeResourceValidationError) return error.message;
+  return 'Deployment failed. Inspect deployment-record.json and Dokploy deployment logs. No automatic database rollback was attempted.';
+}
+
 if (process.argv[1]?.endsWith('dokploy-deploy.mjs')) {
   try { await deploy(JSON.parse(readFileSync(process.argv[2], 'utf8')), process.argv[3]); }
-  catch {
+  catch (error) {
     let record = {};
     try { record = JSON.parse(readFileSync('deployment-record.json', 'utf8')); } catch { /* failure before mutation */ }
     writeFileSync('deployment-record.json', JSON.stringify({ ...record, status: 'failed', failedAt: new Date().toISOString() }, null, 2));
-    console.error('Deployment failed. Inspect deployment-record.json and Dokploy deployment logs. No automatic database rollback was attempted.');
+    console.error(safeDeploymentFailureMessage(error));
     process.exitCode = 1;
   }
 }

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseEnv } from 'node:util';
-import { approvedSource, deploy } from '../scripts/dokploy-deploy.mjs';
-import { guardedCommand, patchDeploymentEnvironment, sourceMarker, validateGithubResource } from '../scripts/github-compose-policy.mjs';
+import { approvedSource, deploy, safeDeploymentFailureMessage } from '../scripts/dokploy-deploy.mjs';
+import { guardedCommand, patchDeploymentEnvironment, SafeResourceValidationError, sourceMarker, validateGithubResource } from '../scripts/github-compose-policy.mjs';
 const images = { web: `ghcr.io/ben-001-sys/tooltrack-web@sha256:${'c'.repeat(64)}`,
   api: `ghcr.io/ben-001-sys/tooltrack-api@sha256:${'d'.repeat(64)}` };
 const proof = { revision: 'a'.repeat(40), composeHash: 'b'.repeat(64), nonce: crypto.randomUUID() };
@@ -113,4 +113,68 @@ test('production still requires explicit approval and current backup evidence be
     await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
     assert.equal(f.calls.length, 0);
   }
+});
+
+test('resource policy failures identify exact fields without exposing Dokploy response values or secrets', async () => {
+  const examples = [
+    ['sourceType', { sourceType: 'raw' }],
+    ['owner', { owner: 'wrong-owner' }],
+    ['repository', { repository: 'wrong-repository' }],
+    ['branch', { branch: 'main' }],
+    ['composePath', { composePath: 'compose.yaml' }],
+    ['composeType', { composeType: 'wrong' }],
+    ['name', { name: 'wrong-resource' }],
+    ['githubId', { githubId: '' }],
+    ['autoDeploy', { autoDeploy: true }],
+    ['isolatedDeployment', { isolatedDeployment: false }],
+    ['randomize', { randomize: true }],
+    ['isolatedDeploymentsVolume', { isolatedDeploymentsVolume: true }],
+    ['appName', { appName: 'invalid app name' }],
+    ['suffix', { suffix: 'wrong-network' }],
+    ['createEnvFile', { createEnvFile: false }],
+    ['command', { command: 'private-dokploy-command-value' }],
+  ];
+  for (const [field, changed] of examples) {
+    const f = fixture();
+    Object.assign(f.resource, changed);
+    f.resource.env += 'OTHER_SECRET=private-environment-value\n';
+    await assert.rejects(deploy(f.manifest, 'staging', f.dependencies), error => {
+      assert.ok(error instanceof SafeResourceValidationError);
+      assert.equal(error.field, field);
+      assert.equal(safeDeploymentFailureMessage(error), `DEPLOYMENT_VALIDATION_FAILED: ${field}`);
+      assert.ok(!safeDeploymentFailureMessage(error).includes('private'));
+      return true;
+    });
+    assert.ok(!f.calls.some(call => call.path === 'compose.saveEnvironment' || call.path === 'compose.deploy'));
+    assert.equal(f.writes.size, 0);
+  }
+});
+
+test('project/environment identity errors disclose field names only and fail before deployment', async () => {
+  for (const [field, route, response] of [
+    ['project.name', 'project.one', { name: 'wrong-project' }],
+    ['resource.environmentId', 'compose.one', { environmentId: 'wrong-env' }],
+    ['environment.projectId', 'environment.one', { projectId: 'wrong-project' }],
+    ['environment.name', 'environment.one', { name: 'wrong-env' }],
+  ]) {
+    const f = fixture();
+    const priorApi = f.dependencies.api;
+    f.dependencies.api = async (path, body, query) => {
+      const result = await priorApi(path, body, query);
+      return path === route ? { ...result, ...response } : result;
+    };
+    await assert.rejects(deploy(f.manifest, 'staging', f.dependencies), error => {
+      assert.equal(safeDeploymentFailureMessage(error), `DEPLOYMENT_VALIDATION_FAILED: ${field}`);
+      return true;
+    });
+    assert.ok(!f.calls.some(call => call.path === 'compose.deploy'));
+    assert.equal(f.writes.size, 0);
+  }
+});
+
+test('unknown deployment failures remain redacted in CLI diagnostics', () => {
+  const secret = 'very-private-secret-key';
+  const message = safeDeploymentFailureMessage(new Error(secret));
+  assert.ok(!message.includes(secret));
+  assert.match(message, /^Deployment failed\./);
 });
