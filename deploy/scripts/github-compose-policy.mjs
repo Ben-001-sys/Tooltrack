@@ -23,22 +23,39 @@ export function guardedCommand(appName, verifierImage) {
   return `run --rm --network none --read-only ${mounts} --env TOOLTRACK_APP_NAME=${appName} ${verifierImage} node /app/deploy/scripts/verify-checkout.mjs` +
     ` && docker compose --project-directory . --env-file ${ENV_PATH} -p ${appName} -f ${COMPOSE_PATH} up -d --wait --wait-timeout 180 --pull always --remove-orphans`;
 }
-export function validateGithubResource(resource, target, verifierImage) {
-  assert.equal(resource.sourceType, 'github');
-  assert.equal(resource.owner, 'Ben-001-sys');
-  assert.equal(resource.repository, 'Tooltrack');
-  assert.equal(resource.branch, target === 'staging' ? 'staging' : 'main');
-  assert.equal(resource.composePath, COMPOSE_PATH);
-  assert.equal(resource.composeType, 'docker-compose');
-  assert.equal(resource.name, `tooltrack-stack-${target}`);
-  assert.ok(typeof resource.githubId === 'string' && resource.githubId.length > 0, 'Official GitHub App provider must be configured');
-  assert.equal(resource.autoDeploy, false, 'The GitHub App grants source access only');
-  assert.equal(resource.isolatedDeployment, true);
-  assert.ok(!resource.randomize && !resource.isolatedDeploymentsVolume, 'Keep stable service and volume identity');
-  assert.ok(!resource.suffix || resource.suffix === resource.appName, 'Use the resource App Name as the isolated network identity');
-  assert.equal(resource.createEnvFile, true);
-  assert.equal(resource.command, guardedCommand(resource.appName, verifierImage), 'Manually install the exact guarded command before enabling deployments');
+// Only trusted, literal field identifiers are emitted to Actions logs.
+// Never interpolate Dokploy's raw resource/response values into these errors.
+export class SafeResourceValidationError extends Error {
+  constructor(field) {
+    super(`DEPLOYMENT_VALIDATION_FAILED: ${field}`);
+    this.name = 'SafeResourceValidationError';
+    this.field = field;
+  }
 }
+export function requireResourceCondition(condition, field) {
+  if (!condition) throw new SafeResourceValidationError(field);
+}
+
+export function validateGithubResource(resource, target, verifierImage) {
+  requireResourceCondition(resource.sourceType === 'github', 'sourceType');
+  requireResourceCondition(resource.owner === 'Ben-001-sys', 'owner');
+  requireResourceCondition(resource.repository === 'Tooltrack', 'repository');
+  requireResourceCondition(resource.branch === (target === 'staging' ? 'staging' : 'main'), 'branch');
+  requireResourceCondition(resource.composePath === COMPOSE_PATH, 'composePath');
+  requireResourceCondition(resource.composeType === 'docker-compose', 'composeType');
+  requireResourceCondition(resource.name === `tooltrack-stack-${target}`, 'name');
+  requireResourceCondition(typeof resource.githubId === 'string' && resource.githubId.length > 0, 'githubId');
+  requireResourceCondition(resource.autoDeploy === false, 'autoDeploy');
+  requireResourceCondition(resource.isolatedDeployment === true, 'isolatedDeployment');
+  requireResourceCondition(!resource.randomize, 'randomize');
+  requireResourceCondition(!resource.isolatedDeploymentsVolume, 'isolatedDeploymentsVolume');
+  requireResourceCondition(typeof resource.appName === 'string' &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/.test(resource.appName), 'appName');
+  requireResourceCondition(!resource.suffix || resource.suffix === resource.appName, 'suffix');
+  requireResourceCondition(resource.createEnvFile === true, 'createEnvFile');
+  requireResourceCondition(resource.command === guardedCommand(resource.appName, verifierImage), 'command');
+}
+
 export function patchDeploymentEnvironment(environment, images, proof) {
   assert.equal(typeof environment, 'string', 'Existing environment must be readable');
   imageReference(images.web, 'web'); imageReference(images.api, 'api');
