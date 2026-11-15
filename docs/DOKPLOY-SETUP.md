@@ -63,6 +63,20 @@ Staging additionally needs Environment variable `STAGING_DEPLOY_ENABLED=true` on
 
 Verify through Settings → Environments and a manually supervised first staging run. Supply only IDs, origins and run links afterward. Never send the API key through chat.
 
+## Troubleshooting a skipped staging job
+
+A successful `staging` push workflow can build, test, scan, publish both images, and upload `candidate.json` **without deploying**. The `staging` job in `.github/workflows/ci.yml` is scheduled only when all of these are true:
+
+- The event is a **push** (not `workflow_dispatch` or a pull-request check).
+- The ref is `refs/heads/staging`.
+- The **repository-level Actions variable** `STAGING_DEPLOY_ENABLED` is exactly the lowercase string `true` at workflow evaluation time.
+
+The screenshot under **Settings → Environments → staging → Environment variables** verifies only the Environment-scoped variable. It does **not** verify the repository-scoped switch. Inspect **Settings → Secrets and variables → Actions → Variables → Repository variables** separately. The protected staging job also reads the **Environment-scoped** `STAGING_DEPLOY_ENABLED` as `DEPLOY_ENABLED`; this second gate is validated by `deploy/scripts/dokploy-deploy.mjs` after the job starts.
+
+When `staging` shows **skipped** but `CI required` and `publish` passed, first inspect the repository variable and the event/ref. A skipped job has not sent any deployment request to Dokploy; it will not produce `accepted-candidate.json`. If the repository switch was missing, set it only after completing the resource/volume/credential readiness checks above. Re-running an old run or manually dispatching CI is not a substitute for a new reviewed **push to staging**, because the workflow's staging condition explicitly requires a push. A subsequent approved merge is one way to create that push.
+
+Do not compensate for a skipped job by clicking **Deploy** in Dokploy. Manual deployment bypasses the Actions adapter's preparation of the source/hash/nonce authorization fields and can correctly fail the checkout verifier. Never remove the verifier or weaken the job condition to bypass readiness.
+
 ## HUMAN ACTION REQUIRED — final merge checks
 
 Main already has the final required-check configuration; staging has the bootstrap review protections. After staging's bootstrap workflows are merged: Settings → Branches → protection rule for staging. Require PRs, one approval, dismiss stale approvals, resolved conversations, branches up to date, and checks `CI required`, `dependencies`, `secrets-and-config`. Block force pushes and deletion. Keep the documented owner emergency recovery path. The exact API configuration is `deploy/github/branch-protection.json`; check names were verified from actual Actions jobs. Verify both branch rules after bootstrap. This affects merge eligibility, not running production.
