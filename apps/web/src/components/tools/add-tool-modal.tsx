@@ -1,10 +1,27 @@
 
 "use client";
 
+import { useState, type FormEvent } from "react";
+
+import { Button } from "@/components/ui/button";
 import {
-  useState,
-  type FormEvent,
-} from "react";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
 import {
   apiRequest,
@@ -28,20 +45,17 @@ const accessOptions: {
   {
     value: "FREE",
     title: "Free Tool",
-    description:
-      "A tool you use without paying for access.",
+    description: "Software available without payment.",
   },
   {
     value: "SUBSCRIPTION",
     title: "Subscription",
-    description:
-      "A tool accessed through a recurring subscription.",
+    description: "Software with recurring payments.",
   },
   {
     value: "LICENSED",
     title: "Licensed Tool",
-    description:
-      "A tool accessed through a purchased license.",
+    description: "Software with a purchased license.",
   },
 ];
 
@@ -51,7 +65,6 @@ export default function AddToolModal({
   onCreated,
 }: AddToolModalProps) {
   const [step, setStep] = useState<1 | 2>(1);
-
   const [accessType, setAccessType] =
     useState<AccessType | null>(null);
 
@@ -61,14 +74,17 @@ export default function AddToolModal({
   const [description, setDescription] = useState("");
 
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(
-    null,
-  );
+  const [error, setError] = useState<string | null>(null);
 
-  function selectAccessType(value: AccessType) {
-    setAccessType(value);
-    setStep(2);
+  const categoryOptions = categories.map((category) => ({
+    value: category.id,
+    label: category.name,
+  }));
+
+  function chooseType(type: AccessType) {
+    setAccessType(type);
     setError(null);
+    setStep(2);
   }
 
   async function handleSubmit(
@@ -76,21 +92,19 @@ export default function AddToolModal({
   ) {
     event.preventDefault();
 
-    if (saving) {
-      return;
-    }
-
-    if (!accessType) {
-      setError("Select a tool access type.");
-      return;
-    }
+    if (saving) return;
 
     const trimmedName = name.trim();
     const trimmedWebsite = websiteUrl.trim();
     const trimmedDescription = description.trim();
 
+    if (!accessType) {
+      setError("Select an access type.");
+      return;
+    }
+
     if (!trimmedName) {
-      setError("Enter the tool name.");
+      setError("Enter a tool name.");
       return;
     }
 
@@ -101,26 +115,24 @@ export default function AddToolModal({
 
     if (trimmedWebsite) {
       try {
-        const parsedUrl = new URL(trimmedWebsite);
+        const url = new URL(trimmedWebsite);
 
         if (
-          parsedUrl.protocol !== "http:" &&
-          parsedUrl.protocol !== "https:"
+          url.protocol !== "http:" &&
+          url.protocol !== "https:"
         ) {
-          throw new Error("Unsupported protocol.");
+          throw new Error("Invalid protocol.");
         }
       } catch {
-        setError(
-          "Enter a valid HTTP or HTTPS website URL.",
-        );
+        setError("Enter a valid HTTP or HTTPS website URL.");
         return;
       }
     }
 
     const payload: CreateToolInput = {
       name: trimmedName,
-      categoryId,
       accessType,
+      categoryId,
     };
 
     if (trimmedDescription) {
@@ -135,7 +147,7 @@ export default function AddToolModal({
     setError(null);
 
     try {
-      const createdTool = await apiRequest<Tool>(
+      const tool = await apiRequest<Tool>(
         "/api/v1/tools",
         {
           method: "POST",
@@ -146,13 +158,13 @@ export default function AddToolModal({
         },
       );
 
-      if (!createdTool.id) {
+      if (!tool.id) {
         throw new Error(
-          "The API did not return the created tool ID.",
+          "The server did not return a tool ID.",
         );
       }
 
-      onCreated(createdTool);
+      onCreated(tool);
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -165,89 +177,77 @@ export default function AddToolModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4 py-8">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="add-tool-title"
-        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl sm:p-8"
+    <Dialog
+      open={true}
+      onOpenChange={(open) => {
+        if (!open && !saving) {
+          onClose();
+        }
+      }}
+    >
+      <DialogContent
+        showCloseButton={!saving}
+        className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
       >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-indigo-600">
-              Step {step} of 2
-            </p>
+        <DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            Step {step} of 2
+          </p>
 
-            <h2
-              id="add-tool-title"
-              className="mt-2 text-xl font-semibold text-slate-900"
-            >
-              {step === 1
-                ? "What type of tool?"
-                : "Add tool details"}
-            </h2>
+          <DialogTitle>
+            {step === 1
+              ? "What type of tool?"
+              : "Add tool details"}
+          </DialogTitle>
 
-            <p className="mt-2 text-sm text-slate-500">
-              {step === 1
-                ? "Select how you access this software."
-                : "Enter the information you want to track."}
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            aria-label="Close add tool dialog"
-            className="rounded-lg px-2 text-2xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-          >
-            ×
-          </button>
-        </div>
+          <DialogDescription>
+            {step === 1
+              ? "Choose how you access this software."
+              : "Enter the information about your tool."}
+          </DialogDescription>
+        </DialogHeader>
 
         {step === 1 ? (
-          <div className="mt-7 space-y-3">
+          <div className="grid gap-3">
             {accessOptions.map((option) => (
-              <button
+              <Button
                 key={option.value}
                 type="button"
-                onClick={() =>
-                  selectAccessType(option.value)
-                }
-                className="w-full rounded-xl border border-slate-200 p-4 text-left transition-colors hover:border-indigo-400 hover:bg-indigo-50"
+                variant="outline"
+                className="h-auto w-full flex-col items-start gap-1 whitespace-normal p-4 text-left"
+                onClick={() => chooseType(option.value)}
               >
-                <span className="block font-semibold text-slate-900">
+                <span className="font-semibold">
                   {option.title}
                 </span>
 
-                <span className="mt-1 block text-sm leading-6 text-slate-500">
+                <span className="text-xs font-normal text-muted-foreground">
                   {option.description}
                 </span>
-              </button>
+              </Button>
             ))}
 
-            <button
-              type="button"
-              onClick={onClose}
-              className="mt-2 w-full rounded-lg border border-slate-200 px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onClose}
+              >
+                Cancel
+              </Button>
+            </DialogFooter>
           </div>
         ) : (
           <form
             onSubmit={handleSubmit}
-            className="mt-7 space-y-5"
+            className="grid gap-4"
           >
-            <div>
-              <label
-                htmlFor="tool-name"
-                className="mb-2 block text-sm font-medium text-slate-700"
-              >
+            <div className="grid gap-2">
+              <Label htmlFor="tool-name">
                 Tool name
-              </label>
+              </Label>
 
-              <input
+              <Input
                 id="tool-name"
                 required
                 maxLength={120}
@@ -256,54 +256,49 @@ export default function AddToolModal({
                   setName(event.target.value)
                 }
                 placeholder="e.g. Figma"
-                className="w-full rounded-lg border border-slate-300 px-3 py-3 text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="tool-category"
-                className="mb-2 block text-sm font-medium text-slate-700"
-              >
+            <div className="grid gap-2">
+              <Label htmlFor="tool-category">
                 Category
-              </label>
+              </Label>
 
-              <select
-                id="tool-category"
-                required
-                value={categoryId}
-                onChange={(event) =>
-                  setCategoryId(event.target.value)
+              <Select
+                items={categoryOptions}
+                value={categoryId || null}
+                onValueChange={(value) =>
+                  setCategoryId(value ?? "")
                 }
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                disabled={saving}
               >
-                <option value="">
-                  Select a category
-                </option>
+                <SelectTrigger
+                  id="tool-category"
+                  className="w-full"
+                  aria-required="true"
+                >
+                  <SelectValue placeholder="Select a category" />
+                </SelectTrigger>
 
-                {categories.map((category) => (
-                  <option
-                    key={category.id}
-                    value={category.id}
-                  >
-                    {category.name}
-                  </option>
-                ))}
-              </select>
+                <SelectContent>
+                  {categoryOptions.map((category) => (
+                    <SelectItem
+                      key={category.value}
+                      value={category.value}
+                    >
+                      {category.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <div>
-              <label
-                htmlFor="tool-website"
-                className="mb-2 block text-sm font-medium text-slate-700"
-              >
-                Website URL
-                <span className="ml-2 font-normal text-slate-400">
-                  Optional
-                </span>
-              </label>
+            <div className="grid gap-2">
+              <Label htmlFor="tool-website">
+                Website URL (optional)
+              </Label>
 
-              <input
+              <Input
                 id="tool-website"
                 type="url"
                 maxLength={2048}
@@ -312,22 +307,15 @@ export default function AddToolModal({
                   setWebsiteUrl(event.target.value)
                 }
                 placeholder="https://example.com"
-                className="w-full rounded-lg border border-slate-300 px-3 py-3 text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="tool-description"
-                className="mb-2 block text-sm font-medium text-slate-700"
-              >
-                Description
-                <span className="ml-2 font-normal text-slate-400">
-                  Optional
-                </span>
-              </label>
+            <div className="grid gap-2">
+              <Label htmlFor="tool-description">
+                Description (optional)
+              </Label>
 
-              <textarea
+              <Textarea
                 id="tool-description"
                 rows={3}
                 maxLength={1500}
@@ -336,40 +324,35 @@ export default function AddToolModal({
                   setDescription(event.target.value)
                 }
                 placeholder="What do you use this tool for?"
-                className="w-full resize-y rounded-lg border border-slate-300 px-3 py-3 text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
               />
             </div>
 
             {error && (
               <p
                 role="alert"
-                className="rounded-lg bg-red-50 p-3 text-sm text-red-700"
+                className="text-sm text-destructive"
               >
                 {error}
               </p>
             )}
 
-            <div className="flex gap-3 pt-2">
-              <button
+            <DialogFooter className="gap-2">
+              <Button
                 type="button"
-                onClick={() => setStep(1)}
+                variant="outline"
                 disabled={saving}
-                className="flex-1 rounded-lg border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                onClick={() => setStep(1)}
               >
                 Back
-              </button>
+              </Button>
 
-              <button
-                type="submit"
-                disabled={saving}
-                className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-              >
+              <Button type="submit" disabled={saving}>
                 {saving ? "Saving..." : "Save Tool"}
-              </button>
-            </div>
+              </Button>
+            </DialogFooter>
           </form>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
