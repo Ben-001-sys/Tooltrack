@@ -21,14 +21,15 @@ No official ToolTrack release has been published or tagged yet. Version `0.1.0` 
 - Preserve existing login development, authentication and migration history.
 - Use the official Dokploy GitHub App for source access with push Auto Deploy disabled; verify the actual checkout and generated Compose before Actions-controlled deployment.
 - Add immutable verifier command generation, source-race/tamper tests, secret-preserving image/proof updates and manual GitHub-backed setup instructions.
-- Add authenticated ToolTrack registration, login/session handling, protected Tools page, and tool create/list APIs.
+- Add authenticated ToolTrack registration, login/session handling, protected Tools page, and per-user Tool create, list, view, edit and delete APIs.
 - Add categories, tool access-type filtering, search, and a shadcn/ui tool-entry dialog.
+- Add personal Collections with create, list, view, edit and delete operations, plus association and removal of existing tools in a collection.
 - Complete the first GitHub-controlled staging deployment with immutable GHCR image digests, verified checkout and generated Compose, and public HTTPS acceptance (CI run 43748556621, attempt 3).
 - Document operational fixes discovered during staging: exact Dokploy Compose path, working upstream DNS/Let's Encrypt, and category seeding.
 
 ### Known limitations and follow-up operations
 
-- The Dashboard and additional Tool management operations beyond create/list are not part of this release candidate.
+- The Dashboard remains future work; this release candidate covers authenticated tool and collection management.
 - Initial category records currently require the idempotent Prisma seed; automated production initialization remains follow-up work.
 - Server DNS corrections were applied at runtime during staging validation and need persistent configuration before relying on certificate renewal.
 - Better Auth proxy client-IP forwarding still requires trusted-proxy configuration.
