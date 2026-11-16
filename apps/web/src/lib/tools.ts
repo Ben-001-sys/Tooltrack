@@ -29,8 +29,8 @@ export interface Tool {
 
 export interface CreateToolInput {
   name: string;
-  description?: string;
-  websiteUrl?: string;
+  description?: string | null;
+  websiteUrl?: string | null;
   accessType: AccessType;
   categoryId: string;
 }
@@ -77,5 +77,6 @@ export async function apiRequest<T>(
     throw new Error(message);
   }
 
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }

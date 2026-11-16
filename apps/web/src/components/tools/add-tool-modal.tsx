@@ -33,8 +33,9 @@ import {
 
 interface AddToolModalProps {
   categories: ToolCategory[];
+  tool?: Tool;
   onClose: () => void;
-  onCreated: (tool: Tool) => void;
+  onSaved: (tool: Tool) => void;
 }
 
 const accessOptions: {
@@ -61,17 +62,18 @@ const accessOptions: {
 
 export default function AddToolModal({
   categories,
+  tool,
   onClose,
-  onCreated,
+  onSaved,
 }: AddToolModalProps) {
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2>(tool ? 2 : 1);
   const [accessType, setAccessType] =
-    useState<AccessType | null>(null);
+    useState<AccessType | null>(tool?.accessType ?? null);
 
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [websiteUrl, setWebsiteUrl] = useState("");
-  const [description, setDescription] = useState("");
+  const [name, setName] = useState(tool?.name ?? "");
+  const [categoryId, setCategoryId] = useState(tool?.categoryId ?? "");
+  const [websiteUrl, setWebsiteUrl] = useState(tool?.websiteUrl ?? "");
+  const [description, setDescription] = useState(tool?.description ?? "");
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,22 +137,22 @@ export default function AddToolModal({
       categoryId,
     };
 
-    if (trimmedDescription) {
-      payload.description = trimmedDescription;
+    if (trimmedDescription || tool) {
+      payload.description = trimmedDescription || null;
     }
 
-    if (trimmedWebsite) {
-      payload.websiteUrl = trimmedWebsite;
+    if (trimmedWebsite || tool) {
+      payload.websiteUrl = trimmedWebsite || null;
     }
 
     setSaving(true);
     setError(null);
 
     try {
-      const tool = await apiRequest<Tool>(
-        "/api/v1/tools",
+      const saved = await apiRequest<Tool>(
+        tool ? `/api/v1/tools/${tool.id}` : "/api/v1/tools",
         {
-          method: "POST",
+          method: tool ? "PATCH" : "POST",
           headers: {
             "Content-Type": "application/json",
           },
@@ -158,13 +160,13 @@ export default function AddToolModal({
         },
       );
 
-      if (!tool.id) {
+      if (!saved.id) {
         throw new Error(
           "The server did not return a tool ID.",
         );
       }
 
-      onCreated(tool);
+      onSaved(saved);
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -190,14 +192,12 @@ export default function AddToolModal({
         className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
       >
         <DialogHeader>
-          <p className="text-xs text-muted-foreground">
-            Step {step} of 2
-          </p>
+          {!tool && (
+            <p className="text-xs text-muted-foreground">Step {step} of 2</p>
+          )}
 
           <DialogTitle>
-            {step === 1
-              ? "What type of tool?"
-              : "Add tool details"}
+            {tool ? "Edit tool" : step === 1 ? "What type of tool?" : "Add tool details"}
           </DialogTitle>
 
           <DialogDescription>
@@ -242,6 +242,31 @@ export default function AddToolModal({
             onSubmit={handleSubmit}
             className="grid gap-4"
           >
+            {tool && (
+              <div className="grid gap-2">
+                <Label htmlFor="tool-access">Access type</Label>
+                <Select
+                  items={accessOptions.map((option) => ({
+                    value: option.value,
+                    label: option.title,
+                  }))}
+                  value={accessType}
+                  onValueChange={setAccessType}
+                  disabled={saving}
+                >
+                  <SelectTrigger id="tool-access" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accessOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label htmlFor="tool-name">
                 Tool name
@@ -249,6 +274,7 @@ export default function AddToolModal({
 
               <Input
                 id="tool-name"
+                disabled={saving}
                 required
                 maxLength={120}
                 value={name}
@@ -300,6 +326,7 @@ export default function AddToolModal({
 
               <Input
                 id="tool-website"
+                disabled={saving}
                 type="url"
                 maxLength={2048}
                 value={websiteUrl}
@@ -317,6 +344,7 @@ export default function AddToolModal({
 
               <Textarea
                 id="tool-description"
+                disabled={saving}
                 rows={3}
                 maxLength={1500}
                 value={description}
@@ -341,13 +369,13 @@ export default function AddToolModal({
                 type="button"
                 variant="outline"
                 disabled={saving}
-                onClick={() => setStep(1)}
+                onClick={tool ? onClose : () => setStep(1)}
               >
-                Back
+                {tool ? "Cancel" : "Back"}
               </Button>
 
               <Button type="submit" disabled={saving}>
-                {saving ? "Saving..." : "Save Tool"}
+                {saving ? "Saving..." : tool ? "Save changes" : "Save Tool"}
               </Button>
             </DialogFooter>
           </form>

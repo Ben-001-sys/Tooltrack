@@ -417,7 +417,17 @@ export default function ToolsPage() {
               ) : (
                 <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                   {filteredTools.map((tool) => (
-                    <ToolCard key={tool.id} tool={tool} />
+                    <ToolCard
+                      key={tool.id}
+                      tool={tool}
+                      categories={categories}
+                      onUpdated={(updated) => setTools((current) =>
+                        current.map((item) => item.id === updated.id ? updated : item)
+                      )}
+                      onDeleted={(id) => setTools((current) =>
+                        current.filter((item) => item.id !== id)
+                      )}
+                    />
                   ))}
                 </div>
               )}
@@ -430,7 +440,7 @@ export default function ToolsPage() {
         <AddToolModal
           categories={categories}
           onClose={() => setShowAddModal(false)}
-          onCreated={handleCreated}
+          onSaved={handleCreated}
         />
       )}
     </main>
