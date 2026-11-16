@@ -7,17 +7,9 @@ import {
 } from "react";
 
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
-
-type ProtectedSessionResponse = {
-  authenticated: boolean;
-  user: {
-    id: string;
-    name: string;
-    email: string;
-  };
-};
 
 export default function LoginPage() {
   const {
@@ -31,20 +23,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-  const [checkingApi, setCheckingApi] = useState(false);
 
   const [error, setError] = useState<string | null>(
     null,
   );
-
-  const [apiStatus, setApiStatus] = useState<
-    number | null
-  >(null);
-
-  const [apiSession, setApiSession] = useState<
-    ProtectedSessionResponse | null
-  >(null);
 
   async function handleLogin(
     event: FormEvent<HTMLFormElement>,
@@ -77,73 +59,6 @@ export default function LoginPage() {
       );
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function checkProtectedApi() {
-    setError(null);
-    setApiStatus(null);
-    setApiSession(null);
-    setCheckingApi(true);
-
-    try {
-      const response = await fetch(
-        "/api/v1/session",
-        {
-          method: "GET",
-          credentials: "same-origin",
-          cache: "no-store",
-        },
-      );
-
-      setApiStatus(response.status);
-
-      if (!response.ok) {
-        setError(
-          `Protected API returned HTTP ${response.status}.`,
-        );
-        return;
-      }
-
-      const data =
-        (await response.json()) as ProtectedSessionResponse;
-
-      setApiSession(data);
-    } catch {
-      setError(
-        "Could not communicate with the protected API.",
-      );
-    } finally {
-      setCheckingApi(false);
-    }
-  }
-
-  async function handleSignOut() {
-    setError(null);
-    setSigningOut(true);
-
-    try {
-      const result = await authClient.signOut();
-
-      if (result.error) {
-        setError(
-          result.error.message ||
-            "Unable to sign out.",
-        );
-        return;
-      }
-
-      setApiStatus(null);
-      setApiSession(null);
-      setPassword("");
-
-      await refetch();
-    } catch {
-      setError(
-        "Unable to connect to the server while signing out.",
-      );
-    } finally {
-      setSigningOut(false);
     }
   }
 
@@ -189,91 +104,7 @@ export default function LoginPage() {
     );
   }
 
-  if (session) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
-        <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <p className="text-sm font-semibold text-indigo-600">
-            ToolTrack
-          </p>
-
-          <h1 className="mt-5 text-2xl font-semibold text-slate-900">
-            You are signed in
-          </h1>
-
-          <p className="mt-3 text-sm text-slate-600">
-            Welcome, {session.user.name}.
-          </p>
-
-          <div className="mt-5 rounded-lg bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">
-              Email address
-            </p>
-
-            <p className="mt-1 break-all text-sm font-medium text-slate-900">
-              {session.user.email}
-            </p>
-          </div>
-
-          <div className="mt-6 space-y-3">
-            <button
-              type="button"
-              onClick={checkProtectedApi}
-              disabled={checkingApi}
-              className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-            >
-              {checkingApi
-                ? "Checking API..."
-                : "Test protected API"}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              className="w-full rounded-lg border border-slate-300 px-4 py-3 font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            >
-              {signingOut
-                ? "Signing out..."
-                : "Sign out"}
-            </button>
-          </div>
-
-          {apiStatus !== null && (
-            <p className="mt-5 text-sm text-slate-600">
-              API status:{" "}
-              <strong>{apiStatus}</strong>
-            </p>
-          )}
-
-          {apiSession && (
-            <div className="mt-4 rounded-lg bg-green-50 p-4">
-              <p className="text-sm font-medium text-green-800">
-                Protected API request successful
-              </p>
-
-              <pre className="mt-3 overflow-x-auto text-xs text-green-900">
-                {JSON.stringify(
-                  apiSession,
-                  null,
-                  2,
-                )}
-              </pre>
-            </div>
-          )}
-
-          {error && (
-            <p
-              role="alert"
-              className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700"
-            >
-              {error}
-            </p>
-          )}
-        </section>
-      </main>
-    );
-  }
+  if (session) redirect("/tools");
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
