@@ -11,13 +11,18 @@ on:
         required: true
         default: false
         type: boolean
-      backup-reference:
-        description: Off-server backup identifier reviewed for this deployment (no credentials)
+      initial-deployment:
+        description: First deployment only; require verified absence of any prior production Compose deployment, database container or volume
         required: true
+        default: false
+        type: boolean
+      backup-reference:
+        description: Required for upgrades; leave empty only for an independently verified initial deployment
+        required: false
         type: string
       backup-verified-at:
-        description: ISO timestamp of backup verification within the past 24 hours
-        required: true
+        description: Required for upgrades; ISO timestamp of backup verification within the past 24 hours
+        required: false
         type: string
 permissions:
   contents: read
@@ -60,6 +65,7 @@ jobs:
         env:
           DEPLOY_ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
           PRODUCTION_APPROVED: ${{ inputs.approve-production }}
+          INITIAL_DEPLOYMENT: ${{ inputs.initial-deployment }}
           BACKUP_REFERENCE: ${{ inputs.backup-reference }}
           BACKUP_VERIFIED_AT: ${{ inputs.backup-verified-at }}
           DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
