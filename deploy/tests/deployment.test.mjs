@@ -54,7 +54,8 @@ function fixture(target = 'staging') {
   let launched = false;
   let saved;
   let smokeCalls = 0;
-  const controls = { wrongMarker: false, concurrentEdit: false };
+  const controls = { wrongMarker: false, concurrentEdit: false, previousHistory: [],
+    volumes: [], containers: [] };
   const dependencies = { environment, log: () => {}, approvedSource: () => ({ revision: proof.revision, composeHash: proof.composeHash }),
     write: (path, text) => writes.set(path, text), read: path => writes.get(path), smoke: async () => { smokeCalls++; },
     api: async (path, body) => {
@@ -64,7 +65,11 @@ function fixture(target = 'staging') {
       if (path === 'project.one') return { name: 'ToolTrack' };
       if (path === 'compose.saveEnvironment') { saved = body.env; return {}; }
       if (path === 'compose.deploy') { assert.equal(body.freshVolumes, false); launched = true; return { success: true }; }
-      if (path === 'deployment.allByCompose') return launched ? [{ deploymentId: 'new-deployment', status: 'done', title: 'Git commit title replacing caller title' }] : [];
+      if (path === 'deployment.allByCompose') return launched
+        ? [...controls.previousHistory, { deploymentId: 'new-deployment', status: 'done', title: 'Git commit title replacing caller title' }]
+        : controls.previousHistory;
+      if (path === 'dockerVolume.getVolumes') return controls.volumes;
+      if (path === 'docker.getContainers') return controls.containers;
       if (path === 'deployment.readLogs') {
         const values = parseEnv(saved);
         return controls.wrongMarker ? 'No valid verification proof\n' : sourceMarker({ revision: values.TOOLTRACK_SOURCE_REVISION,
@@ -110,6 +115,57 @@ test('mocked deployment stops on changed settings, concurrent environment edits 
 test('production still requires explicit approval and current backup evidence before any API call', async () => {
   for (const change of [{ PRODUCTION_APPROVED: 'false' }, { BACKUP_VERIFIED_AT: '2000-01-01T00:00:00Z' }]) {
     const f = fixture('production'); Object.assign(f.dependencies.environment, change);
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('first production deploy without a backup is accepted only after clean host preflight', async () => {
+  const f = fixture('production');
+  f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+  delete f.dependencies.environment.BACKUP_REFERENCE;
+  delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+  await deploy(f.manifest, 'production', f.dependencies);
+  const record = JSON.parse(f.writes.get('deployment-record.json'));
+  assert.equal(record.status, 'passed');
+  assert.equal(record.initialDeployment, true);
+  const paths = f.calls.map(call => call.path);
+  assert.ok(paths.includes('dockerVolume.getVolumes') && paths.includes('docker.getContainers'));
+  assert.ok(paths.indexOf('docker.getContainers') < paths.indexOf('compose.saveEnvironment'));
+  assert.equal(f.smokeCalls(), 1);
+});
+
+test('first production deployment refuses prior history, database volumes, stopped containers and unknown inventory', async () => {
+  const cases = [
+    f => { f.controls.previousHistory = [{ deploymentId: 'prior', status: 'done' }]; },
+    f => { f.controls.volumes = [{ Name: `${f.resource.appName}_postgres_data` }]; },
+    f => { f.controls.volumes = [{ Name: 'unrelated', Labels: { 'com.docker.compose.project': f.resource.appName } }]; },
+    f => { f.controls.containers = [{ Names: [`/${f.resource.appName}-postgres-1`], State: 'exited' }]; },
+    f => { f.controls.containers = [{ Names: ['/unrelated'], Labels: { 'com.docker.compose.project': f.resource.appName } }]; },
+    f => { f.controls.volumes = { error: 'denied' }; },
+    f => { f.controls.containers = { error: 'denied' }; },
+    f => { f.controls.volumes = [{ invalid: true }]; },
+    f => { f.controls.containers = [{ Id: 'unknown-without-names' }]; },
+  ];
+  for (const change of cases) {
+    const f = fixture('production');
+    f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+    delete f.dependencies.environment.BACKUP_REFERENCE;
+    delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+    change(f);
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+    assert.ok(!f.calls.some(c => c.path === 'compose.saveEnvironment' || c.path === 'compose.deploy'));
+    assert.equal(f.smokeCalls(), 0);
+  }
+});
+
+test('bootstrap mode cannot bypass production approval or reuse a backup entry', async () => {
+  for (const envChange of [
+    { PRODUCTION_APPROVED: 'false', BACKUP_REFERENCE: '', BACKUP_VERIFIED_AT: '' },
+    { PRODUCTION_APPROVED: 'true', BACKUP_REFERENCE: 'fake', BACKUP_VERIFIED_AT: '' },
+  ]) {
+    const f = fixture('production');
+    Object.assign(f.dependencies.environment, envChange, { INITIAL_DEPLOYMENT: 'true' });
     await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
     assert.equal(f.calls.length, 0);
   }
