@@ -1,5 +1,20 @@
 # ToolTrack implementation state
 
+## Live staging acceptance and release preparation — 2026-11-16
+
+This section supersedes the historical `2026-11-14` setup snapshot retained below; the earlier no-deployment statement describes that earlier date, not the current deployment state.
+
+- **Source:** `staging` is at `6c671030657e0ae7d1d0af7d4bc42266f7079027` before this release-preparation change. `main` remains at `622ef19ffc58d7969fb519272402fe26f88d88a6` until reviewed promotion.
+- **Accepted staging deployment:** GitHub Actions CI run [43748556621, attempt 3](https://github.com/Ben-001-sys/Tooltrack/actions/runs/43748556621) passed on 2026-11-15 20:47 UTC; deployment verification, immutable image authorization and public HTTPS smoke tests passed. The `accepted-candidate` and `staging-deployment` artifacts were uploaded.
+- **HTTPS recovery:** Traefik initially served `TRAEFIK DEFAULT CERT` because Docker DNS upstreams `1.1.1.1` and `1.0.0.1` timed out from its container. OVH resolver `213.186.33.99` worked. Runtime `resolvectl` configuration and a Traefik-only restart restored DNS; Let's Encrypt issued a trusted certificate, and `/api/v1/health` returned HTTP 200. **Persistence across reboot remains unverified**; apply the correct persistent host DNS configuration before relying on renewal.
+- **Application:** The user confirmed staging categories were fixed. The previously disabled Add Tool buttons were caused by the empty-category safeguard; category seeding is currently a manual operation and must be automated safely in a future reviewed change. No deletion/reset of PostgreSQL was performed.
+- **Known follow-ups:** The Better Auth trusted client-IP forwarding warning remains; configure an ingress-trusted proxy chain before public production traffic. Confirm live authentication/session flows and browser behavior, not just automated anonymous smoke checks.
+- **Release status:** No `v0.1.0` GitHub Release or tag exists yet. This branch prepares the versioned changelog but does not authorize release creation.
+- **Production status:** No production deployment has been initiated. Before release/production: obtain fresh staging acceptance for this changed tree, peer-review promotion to `main`, configure a distinct production Dokploy Compose resource and environment secrets, verify its hostname/certificate, verify independent production data/volume identity, and provide off-server backup/restore evidence and required approvals.
+- **Deployment policy:** GitHub Actions initiates reviewed production releases and explicitly authorized production deployments. Keep Dokploy Auto Deploy OFF; never press the Dokploy Deploy button for normal releases or bypass the source verifier.
+
+---
+
 Updated 2026-11-14. No release or deployment has been claimed or performed.
 
 ## GitHub-backed Dokploy update
