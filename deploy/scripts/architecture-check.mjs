@@ -3,7 +3,18 @@ import assert from 'node:assert/strict';
 
 const schema = readFileSync('apps/api/prisma/schema.prisma', 'utf8');
 // Extend deliberately when adding a business module.
-const ownership = { Category: 'tools', Tool: 'tools', User: 'auth', Session: 'auth', Account: 'auth', Verification: 'auth' };
+const ownership = {
+  Category: 'tools',
+  Tool: 'tools',
+  Collection: 'collections',
+  // The link module owns scalar-ID associations across tools and collections.
+  // No cross-module Prisma relations are introduced.
+  ToolCollectionLink: 'links',
+  User: 'auth',
+  Session: 'auth',
+  Account: 'auth',
+  Verification: 'auth',
+};
 for (const [, model, body] of schema.matchAll(/model\s+(\w+)\s*\{([^}]+)\}/g)) {
   assert.ok(ownership[model], `Assign an owner to ${model}`);
   for (const line of body.split('\n').filter(line => line.includes('@relation'))) {
