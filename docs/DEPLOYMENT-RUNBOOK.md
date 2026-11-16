@@ -1,0 +1,50 @@
+# Deployment runbook
+
+Read CURRENT-STATE.md first and reconcile its historical notes with the latest merged commits. Source on staging now includes registration, backend auth/session endpoints, health, and Tool create/list functionality with frontend search/filtering. Live acceptance of those features and the first GitHub-controlled staging deployment still require recorded evidence; the dashboard remains future work. No official release has been published.
+
+## Staging
+
+Merge only reviewed, green changes into staging. CI validates source, builds/tests/scans images, pushes SHA tags and records digests. When enabled, its staging job uses protected Environment credentials. The adapter confirms the manually configured GitHub App provider, repository, staging/main branch, Compose path, resource/environment/project IDs, isolation, disabled Auto Deploy and exact guarded command. It patches only immutable image references and three reserved source/hash/nonce fields, preserving unrelated environment assignments. Concurrent dashboard edits stop deployment. GitHub serializes each environment's deploys; do not deploy manually while Actions is active. The App grants source access only and never triggers a push deployment.
+
+Before any Compose startup, the pinned verifier image checks Dokploy's actual cloned HEAD, committed Compose hash, generated Compose configuration and env-file digests. A newer staging/main head is rejected even if the deployment was queued earlier; run the candidate/release for the current approved branch revision instead. The generated file may add only the inspected isolated ingress network and Dokploy/web Traefik metadata; image, command, migration, port, volume and private-network changes are refused.
+
+Migrations then run once through the Compose migrate service, never in each API replica. Only committed `prisma migrate deploy` runs. PostgreSQL health, migration completion, API health and web health are distinct gates. Queue acceptance alone is insufficient. Dokploy replaces GitHub deployment titles with commit messages, so the adapter identifies the new deployment ID rather than relying on its title, rejects competing deployments, and requires its unique verification proof before HTTPS smoke acceptance. Logs containing any secrets are never copied into Actions output. Inspect actual running image digests during the initial manually supervised setup before enabling automation.
+
+The public smoke script checks page, proxied health, anonymous Better Auth session and unauthorized protected access. It does not create users on public deployments. Run browser authentication and secure-cookie checks with dedicated provisioned staging accounts before marking initial staging acceptance complete. The automated container suite covers the full auth lifecycle on disposable data. Public browser/TLS verification is separately recorded in CURRENT-STATE.md.
+
+## First reviewed GitHub-controlled staging deployment
+
+Use a small, legitimate, reviewed PR to validate the complete delivery path. A documentation-only PR can exercise the CI and deployment infrastructure, but does not prove the new application features work in a browser. Do not merge solely to bypass checks or force a deployment.
+
+1. One developer opens a PR targeting `staging`; the other developer reviews and approves it. Require `CI required`, `dependencies`, and `secrets-and-config` to pass before merging. Confirm branch protection in GitHub Settings; a requested reviewer is not itself proof that approval is enforced.
+2. Confirm Dokploy's **actual App Name** (generated resource identifier), the `APP_NAME` environment value, `TOOLTRACK_APP_NAME` in the Advanced Command, and the Compose `-p` project name all match exactly. Do not infer that identifier from the display name or an older resource. Check that the existing PostgreSQL container/volume belongs to the intended Compose project before changing project identity.
+3. Confirm the GitHub `staging` Environment has the current Project/Environment/Compose IDs, `DOKPLOY_VERIFIER_IMAGE`, `WEB_ORIGIN`, and the scoped `DOKPLOY_API_KEY` secret. Confirm both the repository and Environment `STAGING_DEPLOY_ENABLED` variables are `true` only after readiness checks. Keep Dokploy's own Auto Deploy OFF.
+4. Generate the Dokploy Advanced Command with `node deploy/scripts/dokploy-command.mjs ACTUAL_DOKPLOY_APP_NAME VERIFIED_API_DIGEST` and install the unmodified output. Dokploy prepends `docker`; do not prepend it in the saved command. Keep the verifier and its read-only mounts intact.
+5. **Do not click Deploy directly in Dokploy to test this guarded path.** The GitHub Actions adapter in `deploy/scripts/dokploy-deploy.mjs` first writes `TOOLTRACK_SOURCE_REVISION`, `TOOLTRACK_COMPOSE_SHA256`, and `TOOLTRACK_DEPLOYMENT_NONCE` into the resource environment. A manual deployment can be rejected because the approved source/nonce values are absent or stale.
+6. After merging the approved PR, observe the new `staging` push workflow: required CI, image verification/scans, GHCR publication, `candidate` artifact, then the protected staging deployment. Verify the checkout marker `TOOLTRACK_SOURCE_VERIFIED` appears for that specific deployment, Compose completes, HTTPS smoke tests pass, and the `accepted-candidate` artifact is uploaded.
+7. Record the GitHub run URL, Git commit SHA, image digests, Dokploy deployment ID, HTTPS outcome, and non-secret database volume identity in `CURRENT-STATE.md`. Keep the deployment record and logs for troubleshooting.
+
+If checkout verification fails, **stop** and investigate the actual App Name, current branch head, generated Compose, `APP_NAME`, pinned image digests, and reserved authorization fields without exposing secrets. Never disable the verifier, invent authorization values, change project names casually, delete volumes, or mark a failed attempt as accepted.
+
+## Release and production
+
+1. Confirm reviewed staging acceptance, migration compatibility and intended functionality. Add the changelog version section before the candidate is staged.
+2. Merge a reviewed staging-to-main promotion and confirm its tree matches the accepted candidate.
+3. Run Release from main with version and candidate run ID; the other developer approves the release Environment. It verifies source and registry digests, signs the manifest using GitHub's OIDC attestation service, and publishes the manifest and Sigstore bundle as release assets without rebuilding images. Retain both assets and the original CI run. Signing/publishing failure must stop promotion; retry only after inspecting an existing tag and never move it to another source.
+4. Preserve the prior known-good manifest and verify an off-server backup and restore readiness. Record a non-secret backup ID and ISO verification timestamp.
+5. Dispatch Deploy production from main with release tag, explicit authorization checkbox, backup reference and timestamp. The other developer approves the production Environment after inspecting version, migrations and backup evidence. No production action occurs automatically on setup or push.
+6. Confirm resource identity, migrations, running image digests, HTTPS smoke and browser auth. Archive deployment-record.json with the release, update CURRENT-STATE.md, and retain previous images.
+
+## Failure and recovery
+
+Stop further promotions on any failure. GitHub marks the job failed; deployment-record.json records failed state, timestamp and any captured prior image references. A pending record is not success. Preserve Actions logs and the corresponding Dokploy deployment logs. The adapter intentionally does not emit raw API responses containing environment secrets. There is no automatic application/database rollback while the live infrastructure remains unverified.
+
+For application rollback, inspect schema compatibility first and use the prior known-good release manifest, not merely the resource's most recently configured image values (a failed attempt can leave newer references configured). The GitHub source guard intentionally refuses an older revision after main has advanced. Prepare a reviewed recovery candidate/current-main configuration or an explicitly approved pinned-source recovery procedure; never force-push main or silently relax the guard. Restore only compatible known-good digests under the same approval policy. Never roll migrations backward automatically. If the previous application cannot read the new schema, maintain service isolation and create a reviewed forward fix or approved restore/cutover plan. Do not delete volumes. A failed migration may require DBA review and a deliberately documented `prisma migrate resolve`; never mark it resolved merely to clear CI.
+
+Rollback rehearsal must use a disposable clone with two actually compatible versions. Current tests cover restarts and a restore, not a two-release application rollback; that remains blocked until there are two accepted release artifacts.
+
+## Logs, monitoring and incidents
+
+Use the resource's Deployments and Logs tabs; correlate source SHA, image digests and GitHub run. Health checks cover process/API reachability; API startup verifies a real database query. The current liveness endpoint is not a continuing database readiness probe. Alert on HTTPS availability, unhealthy containers, database disk usage, failed backup age, migration/deployment failure and authentication error spikes. GitHub failed-run notifications and Dokploy notifications should go to both developers; no paid service is required. External uptime alert delivery needs actual configured infrastructure and remains unverified.
+
+Rotate a leaked secret through the protected store, revoke the old token, redeploy deliberately, and document session invalidation for Better Auth secret rotation. Do not log cookies, database URLs or keys. During an incident assign one operator and one reviewer; freeze unrelated changes and preserve evidence.

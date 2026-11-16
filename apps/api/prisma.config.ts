@@ -1,25 +1,24 @@
+import { config } from 'dotenv';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { config } from "dotenv";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { defineConfig } from "prisma/config";
+import { defineConfig } from 'prisma/config';
 
-const configDirectory = dirname(
-  fileURLToPath(import.meta.url),
-);
+const configDirectory = dirname(fileURLToPath(import.meta.url));
 
 config({
-  path: resolve(configDirectory, "../../.env"),
+  path: resolve(configDirectory, '../../.env'),
 });
 
 export default defineConfig({
-  schema: "prisma/schema.prisma",
+  schema: 'prisma/schema.prisma',
 
   migrations: {
-    path: "prisma/migrations",
+    path: 'prisma/migrations',
+    seed: 'tsx prisma/seed.ts',
   },
 
   datasource: {
-    url: process.env.DATABASE_URL ?? "",
+    url: process.env.DATABASE_URL ?? '',
   },
 });

@@ -65,6 +65,12 @@ export const auth = betterAuth({
 
   trustedOrigins: [webOrigin],
 
+  // Keep security behavior explicit, including subprocesses started by test runners.
+  advanced: {
+    disableOriginCheck: false,
+    disableCSRFCheck: false,
+  },
+
   emailAndPassword: {
     enabled: true,
   },

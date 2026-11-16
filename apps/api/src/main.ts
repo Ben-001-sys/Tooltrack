@@ -2,7 +2,10 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import express from 'express';
+
 import { NestFactory } from '@nestjs/core';
+
 import { AppModule } from './app.module.js';
 
 function loadLocalEnvironment(): void {
@@ -23,8 +26,16 @@ async function bootstrap(): Promise<void> {
   loadLocalEnvironment();
 
   const app = await NestFactory.create(AppModule, {
-    bodyParser: false
-  })
+    bodyParser: false,
+  });
+
+  app.use(
+    '/api/v1',
+    express.json({
+      limit: '64kb',
+    }),
+  );
+
   app.enableShutdownHooks();
 
   const port = process.env.PORT
