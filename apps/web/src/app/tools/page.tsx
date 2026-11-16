@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import AddToolModal from "@/components/tools/add-tool-modal";
 import ToolCard from "@/components/tools/tool-card";
@@ -241,6 +242,7 @@ export default function ToolsPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link href="/collections" className="text-sm font-medium text-indigo-600 hover:underline">Collections</Link>
             <span className="hidden max-w-48 truncate text-sm text-slate-600 sm:block">
               {session.user.name}
             </span>

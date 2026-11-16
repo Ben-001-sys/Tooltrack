@@ -55,10 +55,15 @@ describe('compiled API against disposable PostgreSQL', () => {
     }
   });
 
-  async function post(path: string, body: object) {
+  async function post(path: string, body: object, clientIp?: string) {
     const response = await fetch(`${base}/api/auth/${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: base, cookie },
+      headers: {
+        'content-type': 'application/json',
+        origin: base,
+        cookie,
+        ...(clientIp ? { 'x-forwarded-for': clientIp } : {}),
+      },
       body: JSON.stringify(body),
     });
     const cookies = response.headers.getSetCookie();
@@ -265,4 +270,309 @@ describe('compiled API against disposable PostgreSQL', () => {
       await prisma.$disconnect();
     }
   }, 20_000);
+  it('isolates collections and tools, validates links, and atomically cleans associations without deleting tools', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const category = await prisma.category.create({
+      data: {
+        name: `Collections ${crypto.randomUUID()}`,
+        slug: crypto.randomUUID(),
+      },
+    });
+    const collectionIds: string[] = [];
+    const toolIds: string[] = [];
+    async function request(
+      method: string,
+      path: string,
+      body?: object,
+      sessionCookie = cookie,
+    ) {
+      return fetch(`${base}/api/v1${path}`, {
+        method,
+        headers: {
+          cookie: sessionCookie,
+          origin: base,
+          'content-type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    }
+    async function create(path: '/collections' | '/tools', body: object) {
+      const response = await request('POST', path, body);
+      expect(response.status).toBe(201);
+      const record = (await response.json()) as {
+        id: string;
+        name: string;
+        description: string | null;
+      };
+      (path === '/collections' ? collectionIds : toolIds).push(record.id);
+      return record;
+    }
+    try {
+      const registered = await post(
+        'sign-up/email',
+        {
+          email: `collections-owner-${crypto.randomUUID()}@example.com`,
+          password,
+          name: 'Owner',
+        },
+        '192.0.2.10',
+      );
+      expect(
+        registered.status,
+        registered.ok ? undefined : await registered.text(),
+      ).toBe(200);
+      const owner = cookie;
+      const collection = await create('/collections', {
+        name: ' Development Stack ',
+        description: ' Shared tools ',
+      });
+      expect(collection).toMatchObject({
+        name: 'Development Stack',
+        description: 'Shared tools',
+      });
+      const second = await create('/collections', { name: 'AI Tools' });
+      const tool = await create('/tools', {
+        name: 'Editor',
+        accessType: 'FREE',
+        categoryId: category.id,
+      });
+      const path = `/collections/${collection.id}`;
+      expect(
+        await (await request('GET', '/collections')).json(),
+      ).toContainEqual(expect.objectContaining({ id: collection.id }));
+      expect(await (await request('GET', path)).json()).toMatchObject({
+        id: collection.id,
+      });
+      const patch = await request('PATCH', path, {
+        name: ' Renamed ',
+        description: null,
+      });
+      expect(patch.status).toBe(200);
+      expect(await patch.json()).toMatchObject({
+        name: 'Renamed',
+        description: null,
+      });
+      expect(
+        await (
+          await request('PATCH', path, { description: ' Trimmed ' })
+        ).json(),
+      ).toMatchObject({ name: 'Renamed', description: 'Trimmed' });
+      expect((await request('PATCH', path, {})).status).toBe(200);
+
+      for (const body of [
+        {},
+        { name: null },
+        { name: ' ' },
+        { name: 'x'.repeat(121) },
+        { name: 'Valid', description: 'x'.repeat(1501) },
+        { name: 'Valid', userId: 'attacker' },
+      ]) {
+        expect((await request('POST', '/collections', body)).status).toBe(400);
+      }
+      for (const body of [
+        { name: null },
+        { name: ' ' },
+        { description: 5 },
+        { id: crypto.randomUUID() },
+        { updatedAt: new Date().toISOString() },
+      ]) {
+        expect((await request('PATCH', path, body)).status).toBe(400);
+      }
+      for (const method of ['GET', 'PATCH', 'DELETE']) {
+        const body = method === 'PATCH' ? { name: 'Changed' } : undefined;
+        expect(
+          (await request(method, '/collections/invalid', body)).status,
+        ).toBe(400);
+        expect(
+          (await request(method, `/collections/${crypto.randomUUID()}`, body))
+            .status,
+        ).toBe(404);
+        expect((await request(method, path, body, '')).status).toBe(401);
+      }
+      for (const body of [
+        {},
+        { toolId: 'invalid' },
+        { toolId: tool.id, userId: 'attacker' },
+      ]) {
+        expect((await request('POST', `${path}/tools`, body)).status).toBe(400);
+      }
+      expect(
+        (
+          await request('POST', '/collections/invalid/tools', {
+            toolId: tool.id,
+          })
+        ).status,
+      ).toBe(400);
+      expect((await request('DELETE', `${path}/tools/invalid`)).status).toBe(
+        400,
+      );
+      expect(
+        (
+          await request('POST', `${path}/tools`, {
+            toolId: crypto.randomUUID(),
+          })
+        ).status,
+      ).toBe(404);
+
+      expect(
+        (await request('POST', `${path}/tools`, { toolId: tool.id })).status,
+      ).toBe(201);
+      expect(
+        (await request('POST', `${path}/tools`, { toolId: tool.id })).status,
+      ).toBe(409);
+      expect(
+        (
+          await request('POST', `/collections/${second.id}/tools`, {
+            toolId: tool.id,
+          })
+        ).status,
+      ).toBe(201);
+      expect(
+        await prisma.toolCollectionLink.count({ where: { toolId: tool.id } }),
+      ).toBe(2);
+      expect(await (await request('GET', `${path}/tools`)).json()).toEqual([
+        expect.objectContaining({
+          id: tool.id,
+          category: expect.objectContaining({ id: category.id }),
+        }),
+      ]);
+      const unlinked = await request('DELETE', `${path}/tools/${tool.id}`);
+      expect(unlinked.status).toBe(204);
+      expect(await unlinked.text()).toBe('');
+      expect((await request('DELETE', `${path}/tools/${tool.id}`)).status).toBe(
+        404,
+      );
+      expect((await request('GET', `/tools/${tool.id}`)).status).toBe(200);
+      expect(await (await request('GET', `${path}/tools`)).json()).toEqual([]);
+      expect(
+        (await request('POST', `${path}/tools`, { toolId: tool.id })).status,
+      ).toBe(201);
+
+      expect(
+        (
+          await post(
+            'sign-up/email',
+            {
+              email: `collections-other-${crypto.randomUUID()}@example.com`,
+              password,
+              name: 'Other',
+            },
+            '192.0.2.11',
+          )
+        ).ok,
+      ).toBe(true);
+      const foreignTool = await create('/tools', {
+        name: 'Private',
+        accessType: 'FREE',
+        categoryId: category.id,
+      });
+      const foreignCollection = await create('/collections', {
+        name: 'Private collection',
+      });
+      expect(
+        await (await request('GET', '/collections')).json(),
+      ).not.toContainEqual(expect.objectContaining({ id: collection.id }));
+      for (const [method, suffix, body] of [
+        ['GET', '', undefined],
+        ['PATCH', '', { name: 'Stolen' }],
+        ['DELETE', '', undefined],
+        ['GET', '/tools', undefined],
+        ['POST', '/tools', { toolId: foreignTool.id }],
+        ['DELETE', `/tools/${tool.id}`, undefined],
+      ] as const) {
+        expect((await request(method, `${path}${suffix}`, body)).status).toBe(
+          404,
+        );
+      }
+      cookie = owner;
+      expect(
+        (await request('POST', `${path}/tools`, { toolId: foreignTool.id }))
+          .status,
+      ).toBe(404);
+      expect(
+        (await request('DELETE', `${path}/tools/${foreignTool.id}`)).status,
+      ).toBe(404);
+      expect(
+        (
+          await request('POST', `/collections/${foreignCollection.id}/tools`, {
+            toolId: tool.id,
+          })
+        ).status,
+      ).toBe(404);
+      // Even stale or invalid scalar links cannot expose another user's tool.
+      await prisma.toolCollectionLink.createMany({
+        data: [foreignTool.id, crypto.randomUUID()].map((toolId) => ({
+          toolId,
+          collectionId: collection.id,
+        })),
+      });
+      expect(await (await request('GET', `${path}/tools`)).json()).toEqual([
+        expect.objectContaining({ id: tool.id }),
+      ]);
+
+      const deleted = await request('DELETE', path);
+      expect(deleted.status).toBe(204);
+      expect(await deleted.text()).toBe('');
+      expect(
+        await prisma.toolCollectionLink.count({
+          where: { collectionId: collection.id },
+        }),
+      ).toBe(0);
+      expect((await request('GET', `/tools/${tool.id}`)).status).toBe(200);
+      expect((await request('DELETE', `/tools/${tool.id}`)).status).toBe(204);
+      expect(
+        await prisma.toolCollectionLink.count({ where: { toolId: tool.id } }),
+      ).toBe(0);
+      expect((await request('GET', `/collections/${second.id}`)).status).toBe(
+        200,
+      );
+      expect(
+        await (await request('GET', `/collections/${second.id}/tools`)).json(),
+      ).toEqual([]);
+
+      // Both possible request orderings must leave no orphan links after deletion.
+      for (const deleteTool of [false, true]) {
+        const target = await create('/collections', {
+          name: 'Concurrent collection',
+        });
+        const targetTool = await create('/tools', {
+          name: 'Concurrent tool',
+          accessType: 'FREE',
+          categoryId: category.id,
+        });
+        const [add, remove] = await Promise.all([
+          request('POST', `/collections/${target.id}/tools`, {
+            toolId: targetTool.id,
+          }),
+          request(
+            'DELETE',
+            deleteTool
+              ? `/tools/${targetTool.id}`
+              : `/collections/${target.id}`,
+          ),
+        ]);
+        expect([201, 404]).toContain(add.status);
+        expect(remove.status).toBe(204);
+        expect(
+          await prisma.toolCollectionLink.count({
+            where: { toolId: targetTool.id, collectionId: target.id },
+          }),
+        ).toBe(0);
+      }
+    } finally {
+      await prisma.toolCollectionLink.deleteMany({
+        where: { collectionId: { in: collectionIds } },
+      });
+      await prisma.collection.deleteMany({
+        where: { id: { in: collectionIds } },
+      });
+      await prisma.tool.deleteMany({ where: { id: { in: toolIds } } });
+      await prisma.category.delete({ where: { id: category.id } });
+      await prisma.$disconnect();
+    }
+  }, 30_000);
 });

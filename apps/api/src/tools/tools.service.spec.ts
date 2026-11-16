@@ -6,9 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../prisma/index.js';
 
 import { ToolsService } from './tools.service.js';
+import type { LinksService } from '../links/links.service.js';
 
 describe('ToolsService', () => {
   const prisma = {
+    $transaction: vi.fn(),
     category: {
       findUnique: vi.fn(),
     },
@@ -21,10 +23,17 @@ describe('ToolsService', () => {
     },
   };
 
-  const service = new ToolsService(prisma as unknown as PrismaService);
+  const links = { removeForTool: vi.fn() };
+  const service = new ToolsService(
+    prisma as unknown as PrismaService,
+    links as unknown as LinksService,
+  );
 
   beforeEach(() => {
     vi.resetAllMocks();
+    prisma.$transaction.mockImplementation(
+      (operation: (tx: typeof prisma) => Promise<unknown>) => operation(prisma),
+    );
   });
 
   it('creates a tool owned by the authenticated user', async () => {

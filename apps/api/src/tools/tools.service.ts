@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/index.js';
 import type { CreateToolDto } from './dto/create-tool.dto.js';
 import type { UpdateToolDto } from './dto/update-tool.dto.js';
 import { Prisma } from '../generated/prisma/client.js';
+import { LinksService } from '../links/links.service.js';
 
 const include = {
   category: { select: { id: true, name: true, slug: true } },
@@ -16,7 +17,10 @@ const include = {
 
 @Injectable()
 export class ToolsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly links: LinksService,
+  ) {}
 
   async create(userId: string, dto: CreateToolDto) {
     const name = dto.name.trim();
@@ -53,8 +57,18 @@ export class ToolsService {
     });
   }
 
-  async findOne(userId: string, id: string) {
-    const tool = await this.prisma.tool.findFirst({
+  findManyByIds(userId: string, ids: string[]) {
+    return this.prisma.tool.findMany({
+      where: { userId, id: { in: ids } },
+      include,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async findOne(userId: string, id: string, tx?: Prisma.TransactionClient) {
+    if (tx)
+      await tx.$queryRaw`SELECT id FROM tools WHERE id = ${id}::uuid AND "userId" = ${userId} FOR SHARE`;
+    const tool = await (tx ?? this.prisma).tool.findFirst({
       where: { id, userId },
       include,
     });
@@ -101,8 +115,11 @@ export class ToolsService {
   }
 
   async remove(userId: string, id: string) {
-    const result = await this.prisma.tool.deleteMany({ where: { id, userId } });
-    if (!result.count) throw new NotFoundException('Tool not found.');
+    await this.prisma.$transaction(async (tx) => {
+      const result = await tx.tool.deleteMany({ where: { id, userId } });
+      if (!result.count) throw new NotFoundException('Tool not found.');
+      await this.links.removeForTool(id, tx);
+    });
   }
 
   private async checkCategory(id: string) {
