@@ -17,6 +17,47 @@ export function approvedSource(manifest, target, execute = execFileSync) {
   return { revision, composeHash: sha256(source) };
 }
 
+// The first-production exception is allowed only for a genuinely empty Compose project.
+// Query the Docker host as well as Dokploy history: deployment history alone is not proof
+// that a persisted PostgreSQL volume or stopped container does not exist.
+export async function verifyInitialProductionState(api, resource, history) {
+  assert.ok(Array.isArray(history) && history.length === 0,
+    'Initial deployment requires no prior Compose deployment history');
+  const query = resource.serverId ? { serverId: resource.serverId } : {};
+  const volumeResponse = await api('dockerVolume.getVolumes', undefined, query);
+  const volumes = Array.isArray(volumeResponse) ? volumeResponse
+    : volumeResponse?.Volumes ?? volumeResponse?.volumes;
+  assert.ok(Array.isArray(volumes), 'Cannot verify production Docker volumes');
+  const expectedVolume = `${resource.appName}_postgres_data`;
+  for (const volume of volumes) {
+    const name = volume?.Name ?? volume?.name;
+    assert.equal(typeof name, 'string', 'Unrecognized Docker volume response');
+    const labels = volume.Labels ?? volume.labels ?? {};
+    assert.ok(labels && typeof labels === 'object' && !Array.isArray(labels),
+      'Unrecognized Docker volume labels');
+    assert.ok(name !== expectedVolume &&
+      !(name.startsWith(`${resource.appName}_`) && /postgres/i.test(name)) &&
+      labels['com.docker.compose.project'] !== resource.appName,
+    'Existing production Compose volume: initial deployment is prohibited');
+  }
+  const containerResponse = await api('docker.getContainers', undefined, query);
+  const containers = Array.isArray(containerResponse) ? containerResponse
+    : containerResponse?.containers ?? containerResponse?.Containers;
+  assert.ok(Array.isArray(containers), 'Cannot verify production Docker containers');
+  for (const container of containers) {
+    const labels = container.Labels ?? container.labels ?? {};
+    assert.ok(labels && typeof labels === 'object' && !Array.isArray(labels),
+      'Unrecognized Docker container labels');
+    const names = container.Names ?? container.names ??
+      (container.Name ?? container.name ? [container.Name ?? container.name] : null);
+    assert.ok(Array.isArray(names) && names.every(name => typeof name === 'string'),
+      'Unrecognized Docker container names');
+    assert.ok(labels['com.docker.compose.project'] !== resource.appName &&
+      !names.some(name => name.includes(resource.appName)),
+    'Existing production Compose container: initial deployment is prohibited');
+  }
+}
+
 export async function deploy(manifest, target, dependencies = {}) {
   const environmentValues = dependencies.environment ?? process.env;
   const write = dependencies.write ?? writeFileSync;
@@ -29,11 +70,18 @@ export async function deploy(manifest, target, dependencies = {}) {
   assert.ok(['staging', 'production'].includes(target));
   const required = name => { assert.ok(environmentValues[name], `Missing ${name}`); return environmentValues[name]; };
   assert.equal(required('DEPLOY_ENABLED'), 'true', 'Deployment must be explicitly enabled after setup verification');
+  const initialDeployment = target === 'production' && environmentValues.INITIAL_DEPLOYMENT === 'true';
   if (target === 'production') {
     assert.equal(required('PRODUCTION_APPROVED'), 'true');
-    const backupTime = Date.parse(required('BACKUP_VERIFIED_AT'));
-    assert.ok(Date.now() - backupTime >= 0 && Date.now() - backupTime < 24 * 3600_000, 'Require a backup verified in the past 24 hours');
-    required('BACKUP_REFERENCE');
+    if (initialDeployment) {
+      assert.ok(!environmentValues.BACKUP_REFERENCE && !environmentValues.BACKUP_VERIFIED_AT,
+        'Do not supply backup details in initial deployment mode');
+    } else {
+      const backupTime = Date.parse(required('BACKUP_VERIFIED_AT'));
+      assert.ok(Date.now() - backupTime >= 0 && Date.now() - backupTime < 24 * 3600_000,
+        'Require a backup verified in the past 24 hours');
+      required('BACKUP_REFERENCE');
+    }
   }
   checkpoint('validating protected environment configuration');
   const base = new URL(required('DOKPLOY_URL'));
@@ -77,10 +125,14 @@ export async function deploy(manifest, target, dependencies = {}) {
   const before = await api('deployment.allByCompose', undefined, { composeId });
   assert.ok(Array.isArray(before), 'Unexpected deployment API shape');
   assert.ok(!before.some(item => ['running', 'queued'].includes(item.status)), 'Another deployment is active');
+  if (initialDeployment) {
+    checkpoint('verifying no prior production deployment, PostgreSQL volume or container');
+    await verifyInitialProductionState(api, resource, before);
+  }
   checkpoint('preparing immutable images and authorization without changing server state');
   const images = patchDeploymentEnvironment(resource.env, manifest.images, proof);
   const previous = { WEB_IMAGE: configuration.WEB_IMAGE, API_IMAGE: configuration.API_IMAGE };
-  write('deployment-record.json', JSON.stringify({ target, source: manifest.source, composeRevision: proof.revision,
+  write('deployment-record.json', JSON.stringify({ target, initialDeployment, source: manifest.source, composeRevision: proof.revision,
     composeSha256: proof.composeHash, nonce: proof.nonce,
     images: manifest.images, previous, status: 'pending', startedAt: new Date().toISOString() }, null, 2));
   checkpoint('saving authorized deployment environment');

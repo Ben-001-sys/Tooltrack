@@ -1,10 +1,13 @@
 # Changelog
 
-No official ToolTrack release has been published or tagged yet. Version `0.1.0` below is prepared for review; publishing requires the approved Release workflow.
-
 ## [Unreleased]
 
-- No post-`0.1.0` application changes are recorded in this preparation PR.
+## [0.1.1]
+
+- Add a manually authorized initial-production deployment mode that skips the existing-database backup requirement **only** after checking Dokploy deployment history and the target Docker host for pre-existing Compose containers and persistent database volumes.
+- Fail closed when Docker inventory cannot be read or the expected clean state cannot be verified.
+- Keep ordinary production upgrades subject to a genuine off-server backup verified within 24 hours; do not alter or automatically remove any volume.
+- Preserve peer approval, immutable image provenance, source verification and HTTPS acceptance for initial deployments.
 
 ## [0.1.0]
 
