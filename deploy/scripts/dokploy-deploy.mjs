@@ -134,7 +134,7 @@ export async function deploy(manifest, target, dependencies = {}) {
   checkpoint('checking for existing active deployments');
   const before = await api('deployment.allByCompose', undefined, { composeId });
   assert.ok(Array.isArray(before), 'Unexpected deployment API shape');
-  assert.ok(!before.some(item => ['running', 'queued'].includes(item.status)), 'Another deployment is active');
+  assert.ok(!before.some(item => ['running', 'queued'].includes(item?.status)), 'Another deployment is active');
   if (initialDeployment) {
     checkpoint('verifying failed-only deployment history and absent production data');
     await verifyInitialProductionState(api, resource, before, checkpoint);
