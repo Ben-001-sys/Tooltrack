@@ -167,7 +167,9 @@ test('initial deployment rejects successful, cancelled, running and uncertain hi
     delete f.dependencies.environment.BACKUP_VERIFIED_AT;
     f.controls.previousHistory = [prior];
     await assert.rejects(deploy(f.manifest, 'production', f.dependencies), error =>
-      safeDeploymentFailureMessage(error) === 'DEPLOYMENT_VALIDATION_FAILED: initial.historyStatus');
+      ['running', 'queued'].includes(prior?.status)
+        ? error.message === 'Another deployment is active'
+        : safeDeploymentFailureMessage(error) === 'DEPLOYMENT_VALIDATION_FAILED: initial.historyStatus');
     assert.ok(!f.calls.some(c => c.path === 'compose.saveEnvironment' || c.path === 'compose.deploy'));
   }
 });
