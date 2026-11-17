@@ -40,11 +40,22 @@ export async function verifyInitialProductionState(api, resource, history, check
     const name = volume?.Name ?? volume?.name;
     requireResourceCondition(typeof name === 'string', 'initial.volumeInventoryShape');
     const labels = volume.Labels ?? volume.labels ?? {};
-    requireResourceCondition(labels && typeof labels === 'object' && !Array.isArray(labels),
-      'initial.volumeInventoryShape');
+    // Dokploy uses "docker volume ls --format '{{json .}}'": Labels is a
+    // comma-separated string, unlike docker inspect where Labels is an object.
+    const projectLabels = typeof labels === 'string'
+      ? labels.split(',').map(label => label.trim())
+        .filter(label => label.startsWith('com.docker.compose.project'))
+      : null;
+    requireResourceCondition(projectLabels === null
+      ? labels && typeof labels === 'object' && !Array.isArray(labels)
+      : projectLabels.every(label => label.startsWith('com.docker.compose.project=')),
+    'initial.volumeInventoryShape');
+    const project = projectLabels === null
+      ? labels['com.docker.compose.project']
+      : projectLabels.map(label => label.slice('com.docker.compose.project='.length));
     requireResourceCondition(name !== expectedVolume &&
       !(name.startsWith(`${resource.appName}_`) && /postgres/i.test(name)) &&
-      labels['com.docker.compose.project'] !== resource.appName,
+      (Array.isArray(project) ? !project.includes(resource.appName) : project !== resource.appName),
       'initial.existingVolume');
   }
   checkpoint('reading production Docker container inventory');
