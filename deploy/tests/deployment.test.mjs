@@ -150,6 +150,38 @@ test('first production deployment tolerates failed-only Dokploy history when Doc
   assert.ok(f.calls.some(c => c.path === 'docker.getContainers'));
 });
 
+test('initial deployment accepts Dokploy volume ls string labels from unrelated projects', async () => {
+  const f = fixture('production');
+  f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+  delete f.dependencies.environment.BACKUP_REFERENCE;
+  delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+  f.controls.previousHistory = [{ deploymentId: 'failed-first-try', status: 'error' }];
+  f.controls.volumes = [
+    { Name: 'otherapp_postgres_data', Labels: 'com.docker.compose.project=otherapp,com.docker.compose.volume=postgres_data' },
+    { Name: 'anonymous-volume', Labels: '' },
+    { Name: 'independent-volume', Labels: 'N/A' },
+  ];
+  await deploy(f.manifest, 'production', f.dependencies);
+  assert.equal(JSON.parse(f.writes.get('deployment-record.json')).status, 'passed');
+});
+
+test('first deployment rejects project-labelled volumes in Dokploy string output', async () => {
+  for (const labels of [
+    'com.docker.compose.project=tooltrack-production-test,com.docker.compose.volume=postgres_data',
+    'other=value, com.docker.compose.project=tooltrack-production-test',
+    'com.docker.compose.project : tooltrack-production-test',
+  ]) {
+    const f = fixture('production');
+    f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+    delete f.dependencies.environment.BACKUP_REFERENCE;
+    delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+    f.controls.previousHistory = [{ deploymentId: 'failed-first-try', status: 'error' }];
+    f.controls.volumes = [{ Name: 'anonymous-volume', Labels: labels }];
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+    assert.ok(!f.calls.some(call => call.path === 'compose.saveEnvironment' || call.path === 'compose.deploy'));
+  }
+});
+
 test('initial deployment rejects successful, cancelled, running and uncertain history before changing anything', async () => {
   for (const prior of [
     { deploymentId: 'prior', status: 'done' },
@@ -216,6 +248,7 @@ test('first production deployment refuses prior history, database volumes, stopp
     f => { f.controls.previousHistory = [{ deploymentId: 'prior', status: 'done' }]; },
     f => { f.controls.volumes = [{ Name: `${f.resource.appName}_postgres_data` }]; },
     f => { f.controls.volumes = [{ Name: 'unrelated', Labels: { 'com.docker.compose.project': f.resource.appName } }]; },
+    f => { f.controls.volumes = [{ Name: 'unrelated', Labels: `com.docker.compose.project=${f.resource.appName},com.docker.compose.volume=postgres_data` }]; },
     f => { f.controls.containers = [{ Names: [`/${f.resource.appName}-postgres-1`], State: 'exited' }]; },
     f => { f.controls.containers = [{ Names: ['/unrelated'], Labels: { 'com.docker.compose.project': f.resource.appName } }]; },
     f => { f.controls.volumes = { error: 'denied' }; },

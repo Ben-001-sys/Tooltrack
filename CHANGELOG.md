@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.3]
+
+- Accept the exact Dokploy Docker volume-list label format (`Labels` as a comma-separated string) in the first-production safety preflight, while keeping support for object-shaped Docker labels.
+- Continue rejecting existing ToolTrack Compose volumes, malformed project label entries, unreadable inventory, and previous successful or uncertain deployments.
+- Add regression tests for unrelated labelled volumes, existing ToolTrack volumes and ambiguous label formatting. No application/database schema changes.
+
 ## [0.1.2]
 
 - Permit **only** previous Dokploy deployments with a known `error` status during the first-production bootstrap check; never delete or rewrite deployment history.
