@@ -17,7 +17,13 @@ services:
   migrate:
     image: ${API_IMAGE:?required immutable API image}
     restart: "no"
-    command: [node, /app/node_modules/prisma/build/index.js, migrate, deploy]
+    # Seed required categories after migrations; fail before API startup if seeding fails.
+    command:
+      - sh
+      - -ec
+      - >-
+        node /app/node_modules/prisma/build/index.js migrate deploy &&
+        node --import tsx prisma/seed.ts
     environment:
       DATABASE_URL: ${DATABASE_URL:?required}
     depends_on:
