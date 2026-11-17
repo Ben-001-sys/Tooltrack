@@ -2,6 +2,14 @@
 
 Read CURRENT-STATE.md first and reconcile its historical notes with the latest merged commits. Source on staging now includes registration, backend auth/session endpoints, health, and Tool create/list functionality with frontend search/filtering. Live acceptance of those features and the first GitHub-controlled staging deployment still require recorded evidence; the dashboard remains future work. No official release has been published.
 
+## Category initialization on both environments
+
+Starting with the proposed 0.1.4 release, the shared `deploy/dokploy/compose.yaml` migration service executes `prisma migrate deploy` **and then** the existing `apps/api/prisma/seed.ts` (using `node --import tsx prisma/seed.ts`). It seeds the eight predefined categories into whichever database is configured for that Compose resource. The seed uses slug-based upserts, so it is safe to rerun and preserves user Tools, Collections, authentication records, migrations and existing persistent volumes.
+
+The API starts only after the migration-and-seed service exits successfully; otherwise both API and Web startup remain blocked. CI tests a fresh disposable database, repeats initialization to catch duplicate categories, and verifies the fail-closed gate on seeding errors.
+
+This fix is delivered as normal application images and Compose source in **both** staging and production. For the first production rollout of this fix, the database already exists: **do not use `initial-deployment=true`**. Take a verified off-server backup, obtain a fresh accepted staging candidate and peer review, promote to main, sign the new release and dispatch Deploy production with `initial-deployment=false`, the real backup reference and recent verification time. Do not click Deploy in Dokploy or manually change the Compose resource to bypass the checkout verifier. Verify that `GET /api/v1/categories` returns all eight predefined categories and the Add Tool action is enabled afterward.
+
 ## Staging
 
 Merge only reviewed, green changes into staging. CI validates source, builds/tests/scans images, pushes SHA tags and records digests. When enabled, its staging job uses protected Environment credentials. The adapter confirms the manually configured GitHub App provider, repository, staging/main branch, Compose path, resource/environment/project IDs, isolation, disabled Auto Deploy and exact guarded command. It patches only immutable image references and three reserved source/hash/nonce fields, preserving unrelated environment assignments. Concurrent dashboard edits stop deployment. GitHub serializes each environment's deploys; do not deploy manually while Actions is active. The App grants source access only and never triggers a push deployment.
