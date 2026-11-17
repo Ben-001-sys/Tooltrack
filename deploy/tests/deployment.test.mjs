@@ -135,6 +135,80 @@ test('first production deploy without a backup is accepted only after clean host
   assert.equal(f.smokeCalls(), 1);
 });
 
+test('first production deployment tolerates failed-only Dokploy history when Docker state is empty', async () => {
+  const f = fixture('production');
+  f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+  delete f.dependencies.environment.BACKUP_REFERENCE;
+  delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+  f.controls.previousHistory = [
+    { deploymentId: 'failed-before-env', status: 'error' },
+    { deploymentId: 'failed-before-compose', status: 'error' },
+  ];
+  await deploy(f.manifest, 'production', f.dependencies);
+  assert.equal(JSON.parse(f.writes.get('deployment-record.json')).status, 'passed');
+  assert.ok(f.calls.some(c => c.path === 'dockerVolume.getVolumes'));
+  assert.ok(f.calls.some(c => c.path === 'docker.getContainers'));
+});
+
+test('initial deployment rejects successful, cancelled, running and uncertain history before changing anything', async () => {
+  for (const prior of [
+    { deploymentId: 'prior', status: 'done' },
+    { deploymentId: 'prior', status: 'cancelled' },
+    { deploymentId: 'prior', status: 'running' },
+    { deploymentId: 'prior', status: 'queued' },
+    { deploymentId: 'prior', status: 'unknown' },
+    { deploymentId: 'prior' },
+    { status: 'error' },
+    null,
+  ]) {
+    const f = fixture('production');
+    f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+    delete f.dependencies.environment.BACKUP_REFERENCE;
+    delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+    f.controls.previousHistory = [prior];
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies), error =>
+      safeDeploymentFailureMessage(error) === 'DEPLOYMENT_VALIDATION_FAILED: initial.historyStatus');
+    assert.ok(!f.calls.some(c => c.path === 'compose.saveEnvironment' || c.path === 'compose.deploy'));
+  }
+});
+
+test('failed historical attempt cannot override an existing production database', async () => {
+  const f = fixture('production');
+  f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+  delete f.dependencies.environment.BACKUP_REFERENCE;
+  delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+  f.controls.previousHistory = [{ deploymentId: 'failed', status: 'error' }];
+  f.controls.volumes = [{ Name: `${f.resource.appName}_postgres_data` }];
+  await assert.rejects(deploy(f.manifest, 'production', f.dependencies), error =>
+    safeDeploymentFailureMessage(error) === 'DEPLOYMENT_VALIDATION_FAILED: initial.existingVolume');
+  assert.ok(!f.calls.some(c => c.path === 'compose.saveEnvironment' || c.path === 'compose.deploy'));
+});
+
+test('initial deployment reports only safe inventory access categories and never API secrets', async () => {
+  for (const [path, field] of [
+    ['dockerVolume.getVolumes', 'initial.volumeInventoryAccess'],
+    ['docker.getContainers', 'initial.containerInventoryAccess'],
+  ]) {
+    const f = fixture('production');
+    f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
+    delete f.dependencies.environment.BACKUP_REFERENCE;
+    delete f.dependencies.environment.BACKUP_VERIFIED_AT;
+    f.controls.previousHistory = [{ deploymentId: 'failed', status: 'error' }];
+    const originalApi = f.dependencies.api;
+    f.dependencies.api = (route, body, query) => {
+      if (route === path) throw new Error('private-api-response-with-credentials');
+      return originalApi(route, body, query);
+    };
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies), error => {
+      const message = safeDeploymentFailureMessage(error);
+      assert.equal(message, `DEPLOYMENT_VALIDATION_FAILED: ${field}`);
+      assert.ok(!message.includes('private'));
+      return true;
+    });
+    assert.ok(!f.calls.some(c => c.path === 'compose.saveEnvironment' || c.path === 'compose.deploy'));
+  }
+});
+
 test('first production deployment refuses prior history, database volumes, stopped containers and unknown inventory', async () => {
   const cases = [
     f => { f.controls.previousHistory = [{ deploymentId: 'prior', status: 'done' }]; },
