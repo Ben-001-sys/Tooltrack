@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS build
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS build
 WORKDIR /app
 RUN npm install --global pnpm@11.5.3
 RUN apk add --no-cache openssl ca-certificates git
@@ -11,7 +11,7 @@ COPY apps/api apps/api
 COPY deploy/scripts/github-compose-policy.mjs deploy/scripts/verify-checkout.mjs deploy/scripts/
 RUN pnpm prisma:generate && pnpm build:api
 # Keep Prisma CLI and its dependencies for the controlled one-off migration service.
-FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runtime
 RUN apk add --no-cache openssl ca-certificates git \
     && rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg

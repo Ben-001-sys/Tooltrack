@@ -20,41 +20,51 @@ export function approvedSource(manifest, target, execute = execFileSync) {
 // The first-production exception is allowed only for a genuinely empty Compose project.
 // Query the Docker host as well as Dokploy history: deployment history alone is not proof
 // that a persisted PostgreSQL volume or stopped container does not exist.
-export async function verifyInitialProductionState(api, resource, history) {
-  assert.ok(Array.isArray(history) && history.length === 0,
-    'Initial deployment requires no prior Compose deployment history');
+export async function verifyInitialProductionState(api, resource, history, checkpoint = () => {}) {
+  // Dokploy retains attempts that failed before Compose could initialize.
+  // Only known failed records are acceptable; success, cancellation, in-progress
+  // and unrecognized states remain unsafe for a backup-free initial deployment.
+  requireResourceCondition(Array.isArray(history) && history.every(item =>
+    typeof item?.deploymentId === 'string' && item.deploymentId.length > 0 &&
+    item.status === 'error'), 'initial.historyStatus');
   const query = resource.serverId ? { serverId: resource.serverId } : {};
-  const volumeResponse = await api('dockerVolume.getVolumes', undefined, query);
+  checkpoint('reading production Docker volume inventory');
+  let volumeResponse;
+  try { volumeResponse = await api('dockerVolume.getVolumes', undefined, query); }
+  catch { throw new SafeResourceValidationError('initial.volumeInventoryAccess'); }
   const volumes = Array.isArray(volumeResponse) ? volumeResponse
     : volumeResponse?.Volumes ?? volumeResponse?.volumes;
-  assert.ok(Array.isArray(volumes), 'Cannot verify production Docker volumes');
+  requireResourceCondition(Array.isArray(volumes), 'initial.volumeInventoryShape');
   const expectedVolume = `${resource.appName}_postgres_data`;
   for (const volume of volumes) {
     const name = volume?.Name ?? volume?.name;
-    assert.equal(typeof name, 'string', 'Unrecognized Docker volume response');
+    requireResourceCondition(typeof name === 'string', 'initial.volumeInventoryShape');
     const labels = volume.Labels ?? volume.labels ?? {};
-    assert.ok(labels && typeof labels === 'object' && !Array.isArray(labels),
-      'Unrecognized Docker volume labels');
-    assert.ok(name !== expectedVolume &&
+    requireResourceCondition(labels && typeof labels === 'object' && !Array.isArray(labels),
+      'initial.volumeInventoryShape');
+    requireResourceCondition(name !== expectedVolume &&
       !(name.startsWith(`${resource.appName}_`) && /postgres/i.test(name)) &&
       labels['com.docker.compose.project'] !== resource.appName,
-    'Existing production Compose volume: initial deployment is prohibited');
+      'initial.existingVolume');
   }
-  const containerResponse = await api('docker.getContainers', undefined, query);
+  checkpoint('reading production Docker container inventory');
+  let containerResponse;
+  try { containerResponse = await api('docker.getContainers', undefined, query); }
+  catch { throw new SafeResourceValidationError('initial.containerInventoryAccess'); }
   const containers = Array.isArray(containerResponse) ? containerResponse
     : containerResponse?.containers ?? containerResponse?.Containers;
-  assert.ok(Array.isArray(containers), 'Cannot verify production Docker containers');
+  requireResourceCondition(Array.isArray(containers), 'initial.containerInventoryShape');
   for (const container of containers) {
     const labels = container.Labels ?? container.labels ?? {};
-    assert.ok(labels && typeof labels === 'object' && !Array.isArray(labels),
-      'Unrecognized Docker container labels');
+    requireResourceCondition(labels && typeof labels === 'object' && !Array.isArray(labels),
+      'initial.containerInventoryShape');
     const names = container.Names ?? container.names ??
       (container.Name ?? container.name ? [container.Name ?? container.name] : null);
-    assert.ok(Array.isArray(names) && names.every(name => typeof name === 'string'),
-      'Unrecognized Docker container names');
-    assert.ok(labels['com.docker.compose.project'] !== resource.appName &&
+    requireResourceCondition(Array.isArray(names) && names.every(name => typeof name === 'string'),
+      'initial.containerInventoryShape');
+    requireResourceCondition(labels['com.docker.compose.project'] !== resource.appName &&
       !names.some(name => name.includes(resource.appName)),
-    'Existing production Compose container: initial deployment is prohibited');
+      'initial.existingContainer');
   }
 }
 
@@ -124,10 +134,10 @@ export async function deploy(manifest, target, dependencies = {}) {
   checkpoint('checking for existing active deployments');
   const before = await api('deployment.allByCompose', undefined, { composeId });
   assert.ok(Array.isArray(before), 'Unexpected deployment API shape');
-  assert.ok(!before.some(item => ['running', 'queued'].includes(item.status)), 'Another deployment is active');
+  assert.ok(!before.some(item => ['running', 'queued'].includes(item?.status)), 'Another deployment is active');
   if (initialDeployment) {
-    checkpoint('verifying no prior production deployment, PostgreSQL volume or container');
-    await verifyInitialProductionState(api, resource, before);
+    checkpoint('verifying failed-only deployment history and absent production data');
+    await verifyInitialProductionState(api, resource, before, checkpoint);
   }
   checkpoint('preparing immutable images and authorization without changing server state');
   const images = patchDeploymentEnvironment(resource.env, manifest.images, proof);

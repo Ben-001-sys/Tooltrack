@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.2]
+
+- Permit **only** previous Dokploy deployments with a known `error` status during the first-production bootstrap check; never delete or rewrite deployment history.
+- Still reject any successful, cancelled, active or unrecognized deployment record, and reject pre-existing PostgreSQL volumes and project containers before environment changes.
+- Make failed Docker inventory queries and unexpected inventory formats return sanitized failure categories without exposing credentials or server responses.
+- Keep the production approval, signed release, one-time initial deployment mode and ordinary-upgrade backup requirements unchanged.
+
 ## [0.1.1]
 
 - Add a manually authorized initial-production deployment mode that skips the existing-database backup requirement **only** after checking Dokploy deployment history and the target Docker host for pre-existing Compose containers and persistent database volumes.
