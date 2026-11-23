@@ -92,12 +92,25 @@ export async function deploy(manifest, target, dependencies = {}) {
   const required = name => { assert.ok(environmentValues[name], `Missing ${name}`); return environmentValues[name]; };
   assert.equal(required('DEPLOY_ENABLED'), 'true', 'Deployment must be explicitly enabled after setup verification');
   const initialDeployment = target === 'production' && environmentValues.INITIAL_DEPLOYMENT === 'true';
+  const unbackedUpgrade = target === 'production' && environmentValues.ALLOW_UNBACKED_UPGRADE === 'true';
   if (target === 'production') {
     assert.equal(required('PRODUCTION_APPROVED'), 'true');
     if (initialDeployment) {
+      assert.ok(!unbackedUpgrade && !environmentValues.UNBACKED_UPGRADE_ACKNOWLEDGEMENT,
+        'The initial deployment and no-backup upgrade options cannot be combined');
       assert.ok(!environmentValues.BACKUP_REFERENCE && !environmentValues.BACKUP_VERIFIED_AT,
         'Do not supply backup details in initial deployment mode');
+    } else if (unbackedUpgrade) {
+      assert.equal(environmentValues.INITIAL_DEPLOYMENT, 'false');
+      assert.equal(manifest.tag, 'v0.1.4', 'No-backup upgrade is permitted only for release v0.1.4');
+      assert.equal(required('UNBACKED_UPGRADE_ACKNOWLEDGEMENT'),
+        'I ACCEPT PERMANENT DATA LOSS RISK FOR TOOLTRACK V0.1.4',
+        'Explicit risk acknowledgement is required');
+      assert.ok(!environmentValues.BACKUP_REFERENCE && !environmentValues.BACKUP_VERIFIED_AT,
+        'Leave both backup fields empty when accepting an unbacked upgrade');
     } else {
+      assert.ok(!environmentValues.UNBACKED_UPGRADE_ACKNOWLEDGEMENT,
+        'Risk acknowledgement requires allow-unbacked-upgrade');
       const backupTime = Date.parse(required('BACKUP_VERIFIED_AT'));
       assert.ok(Date.now() - backupTime >= 0 && Date.now() - backupTime < 24 * 3600_000,
         'Require a backup verified in the past 24 hours');
@@ -150,10 +163,19 @@ export async function deploy(manifest, target, dependencies = {}) {
     checkpoint('verifying failed-only deployment history and absent production data');
     await verifyInitialProductionState(api, resource, before, checkpoint);
   }
+  if (unbackedUpgrade) {
+    checkpoint('verifying previous successful production deployment');
+    requireResourceCondition(before.some(item =>
+      typeof item?.deploymentId === 'string' && item.deploymentId.length > 0 &&
+      item.status === 'done'), 'unbackedUpgrade.existingDeployment');
+  }
   checkpoint('preparing immutable images and authorization without changing server state');
   const images = patchDeploymentEnvironment(resource.env, manifest.images, proof);
   const previous = { WEB_IMAGE: configuration.WEB_IMAGE, API_IMAGE: configuration.API_IMAGE };
-  write('deployment-record.json', JSON.stringify({ target, initialDeployment, source: manifest.source, composeRevision: proof.revision,
+  write('deployment-record.json', JSON.stringify({ target, initialDeployment,
+    unbackedUpgrade, releaseTag: target === 'production' ? manifest.tag : undefined,
+    backupMode: unbackedUpgrade ? 'explicit-unbacked-upgrade' : initialDeployment ? 'verified-empty-environment' : 'backup-reference-required',
+    source: manifest.source, composeRevision: proof.revision,
     composeSha256: proof.composeHash, nonce: proof.nonce,
     images: manifest.images, previous, status: 'pending', startedAt: new Date().toISOString() }, null, 2));
   checkpoint('saving authorized deployment environment');

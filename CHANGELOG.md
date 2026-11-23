@@ -4,6 +4,7 @@
 
 ## [0.1.4]
 
+- Allow a one-release, explicitly approved no-backup upgrade of an existing production environment only for v0.1.4; require exact risk acknowledgement and prior successful deployment, preserve release/source protections, and record the absence of verified backup evidence.
 - Add collaborative public/private Collections: owners control visibility, and signed-in users can view, edit, contribute tools to, remove links from, and delete public collections. Private collections remain owner-only.
 - Preserve individual Tool ownership and restricted public tool summaries for cross-user collection contributions; prevent disclosure of private Tool notes and department tags.
 - Add 18 CETECH department tags, multi-tag editing, tag badges, and combined department filtering in My Tools.

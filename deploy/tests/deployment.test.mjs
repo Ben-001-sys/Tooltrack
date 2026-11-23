@@ -120,6 +120,89 @@ test('production still requires explicit approval and current backup evidence be
   }
 });
 
+const acceptedRisk = 'I ACCEPT PERMANENT DATA LOSS RISK FOR TOOLTRACK V0.1.4';
+
+function unbackedUpgradeFixture() {
+  const f = fixture('production');
+  f.manifest.tag = 'v0.1.4';
+  Object.assign(f.dependencies.environment, {
+    INITIAL_DEPLOYMENT: 'false',
+    ALLOW_UNBACKED_UPGRADE: 'true',
+    UNBACKED_UPGRADE_ACKNOWLEDGEMENT: acceptedRisk,
+    BACKUP_REFERENCE: '',
+    BACKUP_VERIFIED_AT: '',
+  });
+  f.controls.previousHistory = [{ deploymentId: 'existing-production-deployment', status: 'done' }];
+  return f;
+}
+
+test('v0.1.4 explicitly approved unbacked production upgrade retains existing volumes and records risk', async () => {
+  const f = unbackedUpgradeFixture();
+  await deploy(f.manifest, 'production', f.dependencies);
+  const record = JSON.parse(f.writes.get('deployment-record.json'));
+  assert.equal(record.status, 'passed');
+  assert.equal(record.initialDeployment, false);
+  assert.equal(record.unbackedUpgrade, true);
+  assert.equal(record.backupMode, 'explicit-unbacked-upgrade');
+  assert.equal(record.releaseTag, 'v0.1.4');
+  assert.equal(f.smokeCalls(), 1);
+  assert.ok(f.calls.some(call => call.path === 'compose.saveEnvironment'));
+  assert.ok(f.calls.some(call => call.path === 'compose.deploy' && call.body.freshVolumes === false));
+  assert.ok(!f.calls.some(call => call.path === 'dockerVolume.getVolumes' || call.path === 'docker.getContainers'));
+});
+
+test('unbacked upgrade rejects absent or incorrect acknowledgement, approval and release before any API call', async () => {
+  const cases = [
+    f => { f.dependencies.environment.UNBACKED_UPGRADE_ACKNOWLEDGEMENT = ''; },
+    f => { f.dependencies.environment.UNBACKED_UPGRADE_ACKNOWLEDGEMENT = 'accepted'; },
+    f => { f.dependencies.environment.PRODUCTION_APPROVED = 'false'; },
+    f => { f.manifest.tag = 'v0.1.5'; },
+    f => { delete f.manifest.tag; },
+    f => { f.dependencies.environment.INITIAL_DEPLOYMENT = 'true'; },
+    f => { delete f.dependencies.environment.INITIAL_DEPLOYMENT; },
+    f => { f.dependencies.environment.BACKUP_REFERENCE = 'unverified'; },
+    f => { f.dependencies.environment.BACKUP_VERIFIED_AT = new Date().toISOString(); },
+  ];
+  for (const modify of cases) {
+    const f = unbackedUpgradeFixture();
+    modify(f);
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.writes.size, 0);
+  }
+});
+
+test('unbacked upgrade rejects new production environments or failed-only deployment history', async () => {
+  for (const history of [
+    [],
+    [{ deploymentId: 'failed-attempt', status: 'error' }],
+    [{ deploymentId: 'pending-attempt', status: 'running' }],
+    [{ deploymentId: '', status: 'done' }],
+  ]) {
+    const f = unbackedUpgradeFixture();
+    f.controls.previousHistory = history;
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+    assert.ok(!f.calls.some(call => call.path === 'compose.saveEnvironment' || call.path === 'compose.deploy'));
+    assert.equal(f.writes.size, 0);
+  }
+});
+
+test('normal production upgrades still require backup evidence even if the risk text is present', async () => {
+  for (const changes of [
+    { ALLOW_UNBACKED_UPGRADE: 'false' },
+    { ALLOW_UNBACKED_UPGRADE: '' },
+  ]) {
+    const f = unbackedUpgradeFixture();
+    Object.assign(f.dependencies.environment, changes);
+    await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+    assert.equal(f.calls.length, 0);
+  }
+  const f = fixture('production');
+  f.dependencies.environment.UNBACKED_UPGRADE_ACKNOWLEDGEMENT = acceptedRisk;
+  await assert.rejects(deploy(f.manifest, 'production', f.dependencies));
+  assert.equal(f.calls.length, 0);
+});
+
 test('first production deploy without a backup is accepted only after clean host preflight', async () => {
   const f = fixture('production');
   f.dependencies.environment.INITIAL_DEPLOYMENT = 'true';
