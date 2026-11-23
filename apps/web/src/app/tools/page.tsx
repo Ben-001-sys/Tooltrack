@@ -256,7 +256,7 @@ export default function ToolsPage() {
   return (
     <main className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
           <div>
             <p className="text-xl font-bold tracking-tight text-indigo-600">
               ToolTrack
@@ -265,8 +265,11 @@ export default function ToolsPage() {
             <p className="text-xs text-slate-500">Software Tool Manager</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Link href="/collections" className="text-sm font-medium text-indigo-600 hover:underline">Collections</Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <nav aria-label="Collection navigation" className="flex flex-wrap gap-3 text-sm font-medium text-indigo-600">
+              <Link href="/collections" className="hover:underline">My Collections</Link>
+              <Link href="/explore/collections" className="hover:underline">Explore Collections</Link>
+            </nav>
             <span className="hidden max-w-48 truncate text-sm text-slate-600 sm:block">
               {session.user.name}
             </span>

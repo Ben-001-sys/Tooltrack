@@ -45,6 +45,18 @@ function invalidReference(error: unknown, tagIds?: string[]): never {
   throw error;
 }
 
+function collectionWebsite(value: string | null) {
+  const url = value ? URL.parse(value) : null;
+  if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:'))
+    return null;
+  // These URL components can contain credentials or private tokens.
+  url.username = '';
+  url.password = '';
+  url.search = '';
+  url.hash = '';
+  return url.href;
+}
+
 @Injectable()
 export class ToolsService {
   constructor(
@@ -104,12 +116,33 @@ export class ToolsService {
     return tools.map(withTags);
   }
 
-  findManyByIds(userId: string, ids: string[]) {
-    return this.prisma.tool.findMany({
+  findManyByIds(userId: string, ids: string[], tx: Prisma.TransactionClient) {
+    return tx.tool.findMany({
       where: { userId, id: { in: ids } },
       include,
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async findCollectionToolSummaries(
+    ids: string[],
+    tx: Prisma.TransactionClient,
+  ) {
+    const tools = await tx.tool.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        websiteUrl: true,
+        accessType: true,
+        category: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return tools.map((tool) => ({
+      ...tool,
+      websiteUrl: collectionWebsite(tool.websiteUrl),
+    }));
   }
 
   async findOne(userId: string, id: string, tx?: Prisma.TransactionClient) {

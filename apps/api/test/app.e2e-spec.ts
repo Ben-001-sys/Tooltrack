@@ -341,6 +341,7 @@ describe('compiled API against disposable PostgreSQL', () => {
       expect(collection).toMatchObject({
         name: 'Development Stack',
         description: 'Shared tools',
+        visibility: 'PRIVATE',
       });
       const second = await create('/collections', { name: 'AI Tools' });
       const tool = await create('/tools', {
@@ -584,6 +585,380 @@ describe('compiled API against disposable PostgreSQL', () => {
     }
   }, 30_000);
 
+  it('preserves existing collections and links when migrating visibility', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const rollback = new Error('Roll back isolated migration fixture');
+    const migration = (name: string) =>
+      readFile(
+        new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
+        'utf8',
+      );
+    const [before, after] = await Promise.all([
+      migration('20261116133000_add_collections_and_tool_links'),
+      migration('20261123120000_add_collection_visibility'),
+    ]);
+    try {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          const schema = `migration_${crypto.randomUUID().replaceAll('-', '')}`;
+          await tx.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
+          await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${schema}"`);
+          const apply = async (sql: string) => {
+            for (const statement of sql.split(';').map((part) => part.trim())) {
+              if (statement) await tx.$executeRawUnsafe(statement);
+            }
+          };
+          await apply(before);
+          const id = crypto.randomUUID();
+          const toolId = crypto.randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO collections (id, "userId", name, "updatedAt")
+            VALUES (${id}::uuid, 'legacy-owner', 'Legacy collection', now())
+          `;
+          await tx.$executeRaw`
+            INSERT INTO tool_collection_links (id, "collectionId", "toolId")
+            VALUES (${crypto.randomUUID()}::uuid, ${id}::uuid, ${toolId}::uuid)
+          `;
+          await apply(after);
+          expect(
+            await tx.$queryRaw`
+            SELECT c.name, c."userId", c.visibility::text, l."toolId", l."addedByUserId"
+            FROM collections c JOIN tool_collection_links l ON l."collectionId" = c.id
+            WHERE c.id = ${id}::uuid
+          `,
+          ).toEqual([
+            {
+              name: 'Legacy collection',
+              userId: 'legacy-owner',
+              visibility: 'PRIVATE',
+              toolId,
+              addedByUserId: null,
+            },
+          ]);
+          throw rollback;
+        }),
+      ).rejects.toBe(rollback);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  it('lets three signed-in users collaborate on public collections without sharing Tool ownership', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const category = await prisma.category.create({
+      data: {
+        name: `Collaboration ${crypto.randomUUID()}`,
+        slug: crypto.randomUUID(),
+      },
+    });
+    const users: string[] = [];
+    const emails: string[] = [];
+    const collections: string[] = [];
+    const discovery = '/public-collections';
+    function request(
+      actor: string,
+      method: string,
+      path: string,
+      body?: object,
+    ) {
+      return fetch(`${base}/api/v1${path}`, {
+        method,
+        headers: {
+          cookie: actor,
+          origin: base,
+          'content-type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    }
+    async function create(actor: string, path: string, data: object) {
+      const response = await request(actor, 'POST', path, data);
+      expect(response.status).toBe(201);
+      const record = (await response.json()) as { id: string };
+      if (path === '/collections') collections.push(record.id);
+      return record;
+    }
+    try {
+      for (const [index, name] of [
+        'Emmanuel',
+        'Benjamin',
+        'Contributor',
+      ].entries()) {
+        cookie = '';
+        const email = `collaborator-${crypto.randomUUID()}@example.com`;
+        emails.push(email);
+        const registration = await post(
+          'sign-up/email',
+          { email, password, name },
+          `192.0.2.${20 + index}`,
+        );
+        expect(registration.status).toBe(200);
+        users.push(cookie);
+      }
+      const [owner, collaborator, contributor] = users;
+      const saved = await Promise.all(
+        users.map((actor, index) =>
+          create(actor, '/tools', {
+            name: ['Terminal', 'VS Code', 'Docker'][index],
+            description: 'Private notes',
+            websiteUrl: 'https://example.com/tool?token=private#notes',
+            accessType: 'FREE',
+            categoryId: category.id,
+          }),
+        ),
+      );
+      const collection = await create(owner, '/collections', {
+        name: 'Development Tools',
+      });
+      const path = `/collections/${collection.id}`;
+      const publicPath = `${discovery}/${collection.id}`;
+      const linkPath = `${path}/tools`;
+
+      for (const route of [discovery, publicPath, `${publicPath}/tools`]) {
+        expect((await request('', 'GET', route)).status).toBe(401);
+      }
+      expect(await (await request(owner, 'GET', path)).json()).toMatchObject({
+        visibility: 'PRIVATE',
+        isOwner: true,
+      });
+      expect(
+        await (await request(collaborator, 'GET', discovery)).json(),
+      ).not.toContainEqual(expect.objectContaining({ id: collection.id }));
+      expect((await request(owner, 'GET', publicPath)).status).toBe(404);
+      expect((await request(owner, 'GET', `${publicPath}/tools`)).status).toBe(
+        404,
+      );
+      for (const visibility of [null, 'public', 'SHARED', 1]) {
+        expect(
+          (await request(owner, 'PATCH', path, { visibility })).status,
+        ).toBe(400);
+        expect(
+          (
+            await request(owner, 'POST', '/collections', {
+              name: 'Invalid',
+              visibility,
+            })
+          ).status,
+        ).toBe(400);
+      }
+      expect(
+        (await request(owner, 'PATCH', path, { visibility: 'PUBLIC' })).status,
+      ).toBe(200);
+      expect(
+        await (await request(collaborator, 'GET', '/collections')).json(),
+      ).toEqual([]);
+      expect(
+        await (await request(collaborator, 'GET', discovery)).json(),
+      ).toContainEqual(
+        expect.objectContaining({
+          id: collection.id,
+          visibility: 'PUBLIC',
+          isOwner: false,
+          toolCount: 0,
+        }),
+      );
+      for (const route of [path, publicPath]) {
+        const response = await request(collaborator, 'GET', route);
+        expect(response.status).toBe(200);
+        expect(response.headers.get('cache-control')).toContain('no-store');
+        const body: unknown = await response.json();
+        expect(body).toMatchObject({
+          id: collection.id,
+          visibility: 'PUBLIC',
+          isOwner: false,
+        });
+        expect(body).not.toHaveProperty('userId');
+      }
+      expect(
+        (
+          await request(collaborator, 'PATCH', path, {
+            name: 'Must not change',
+            visibility: 'PRIVATE',
+          })
+        ).status,
+      ).toBe(403);
+      expect(await (await request(owner, 'GET', path)).json()).toMatchObject({
+        name: 'Development Tools',
+        visibility: 'PUBLIC',
+      });
+      expect(
+        await (
+          await request(collaborator, 'PATCH', path, {
+            name: 'Developer Tools',
+            description: 'Shared development tools',
+          })
+        ).json(),
+      ).toMatchObject({
+        name: 'Developer Tools',
+        description: 'Shared development tools',
+      });
+      expect(
+        (await request(collaborator, 'POST', linkPath, { toolId: saved[0].id }))
+          .status,
+      ).toBe(404);
+      for (const [index, actor] of users.entries()) {
+        expect(
+          (await request(actor, 'POST', linkPath, { toolId: saved[index].id }))
+            .status,
+        ).toBe(201);
+      }
+      expect(
+        (await request(collaborator, 'POST', linkPath, { toolId: saved[1].id }))
+          .status,
+      ).toBe(409);
+      expect(
+        await (await request(collaborator, 'GET', discovery)).json(),
+      ).toContainEqual(
+        expect.objectContaining({ id: collection.id, toolCount: 3 }),
+      );
+      for (const route of [linkPath, `${publicPath}/tools`]) {
+        const response = await request(contributor, 'GET', route);
+        expect(response.status).toBe(200);
+        const items: unknown = await response.json();
+        expect(items).toHaveLength(3);
+        expect(items).toEqual(
+          expect.arrayContaining(
+            saved.map(({ id }, index) => ({
+              id,
+              name: ['Terminal', 'VS Code', 'Docker'][index],
+              websiteUrl: 'https://example.com/tool',
+              accessType: 'FREE',
+              category: { name: category.name },
+            })),
+          ),
+        );
+      }
+      const ownerTool = `/tools/${saved[0].id}`;
+      for (const method of ['GET', 'PATCH', 'DELETE']) {
+        expect(
+          (
+            await request(
+              collaborator,
+              method,
+              ownerTool,
+              method === 'PATCH' ? { name: 'Stolen' } : undefined,
+            )
+          ).status,
+        ).toBe(404);
+      }
+      expect(
+        (await request(contributor, 'DELETE', `${linkPath}/${saved[1].id}`))
+          .status,
+      ).toBe(204);
+      expect(
+        (await request(collaborator, 'GET', `/tools/${saved[1].id}`)).status,
+      ).toBe(200);
+
+      // Hold an uncommitted privatization until PostgreSQL confirms the link request is blocked.
+      for (const [method, suffix, body] of [
+        ['POST', '', { toolId: saved[1].id }],
+        ['DELETE', `/${saved[2].id}`, undefined],
+      ] as const) {
+        expect(
+          (await request(owner, 'PATCH', path, { visibility: 'PUBLIC' }))
+            .status,
+        ).toBe(200);
+        let pending: Promise<Response> | undefined;
+        await prisma.$transaction(async (tx) => {
+          await tx.collection.update({
+            where: { id: collection.id },
+            data: { visibility: 'PRIVATE' },
+          });
+          pending = request(collaborator, method, `${linkPath}${suffix}`, body);
+          let blocked = false;
+          for (let attempt = 0; attempt < 100 && !blocked; attempt++) {
+            const [result] = await tx.$queryRaw<{ blocked: boolean }[]>`
+              SELECT EXISTS (
+                SELECT FROM pg_locks
+                WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
+              ) AS blocked
+            `;
+            blocked = result.blocked;
+            if (!blocked)
+              await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          expect(blocked).toBe(true);
+        });
+        expect((await pending)?.status).toBe(404);
+      }
+      expect(
+        await (await request(contributor, 'GET', discovery)).json(),
+      ).not.toContainEqual(expect.objectContaining({ id: collection.id }));
+      for (const route of [path, linkPath, publicPath, `${publicPath}/tools`]) {
+        expect((await request(contributor, 'GET', route)).status).toBe(404);
+      }
+      expect(
+        (await request(contributor, 'PATCH', path, { name: 'Revoked' })).status,
+      ).toBe(404);
+      expect((await request(contributor, 'DELETE', path)).status).toBe(404);
+      const privateTools: unknown = await (
+        await request(owner, 'GET', linkPath)
+      ).json();
+      expect(privateTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: saved[0].id,
+            description: 'Private notes',
+          }),
+          {
+            id: saved[2].id,
+            name: 'Docker',
+            websiteUrl: 'https://example.com/tool',
+            accessType: 'FREE',
+            category: { name: category.name },
+          },
+        ]),
+      );
+      expect(privateTools).toHaveLength(2);
+      expect(
+        (await request(owner, 'PATCH', path, { visibility: 'PUBLIC' })).status,
+      ).toBe(200);
+      expect((await request(collaborator, 'DELETE', path)).status).toBe(204);
+      expect(
+        await prisma.toolCollectionLink.count({
+          where: { collectionId: collection.id },
+        }),
+      ).toBe(0);
+      expect((await request(owner, 'GET', path)).status).toBe(404);
+      for (const [index, actor] of users.entries()) {
+        expect(
+          (await request(actor, 'GET', `/tools/${saved[index].id}`)).status,
+        ).toBe(200);
+      }
+      const publicAtCreation = await create(owner, '/collections', {
+        name: 'Published',
+        visibility: 'PUBLIC',
+      });
+      expect(
+        (
+          await request(
+            contributor,
+            'GET',
+            `${discovery}/${publicAtCreation.id}`,
+          )
+        ).status,
+      ).toBe(200);
+    } finally {
+      await prisma.toolCollectionLink.deleteMany({
+        where: { collectionId: { in: collections } },
+      });
+      await prisma.collection.deleteMany({
+        where: { id: { in: collections } },
+      });
+      await prisma.tool.deleteMany({ where: { categoryId: category.id } });
+      await prisma.category.delete({ where: { id: category.id } });
+      await prisma.user.deleteMany({ where: { email: { in: emails } } });
+      await prisma.$disconnect();
+    }
+  }, 30_000);
   it('migrates an existing tool and category without adding associations', async () => {
     const prisma = new PrismaClient({
       adapter: new PrismaPg({

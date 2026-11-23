@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   ParseUUIDPipe,
@@ -27,7 +28,7 @@ const body = new ValidationPipe({
   transform: true,
 });
 
-@Controller('api/v1/collections/:id/tools')
+@Controller('api/v1')
 export class LinksController {
   constructor(
     private readonly prisma: PrismaService,
@@ -36,16 +37,54 @@ export class LinksController {
     private readonly tools: ToolsService,
   ) {}
 
-  @Get()
-  async list(@Session() session: UserSession, @Param('id', uuid) id: string) {
-    await this.collections.findOne(session.user.id, id);
-    return this.tools.findManyByIds(
-      session.user.id,
-      await this.links.toolIds(id),
-    );
+  @Get('collections/:id/tools')
+  @Header('Cache-Control', 'private, no-store')
+  list(@Session() session: UserSession, @Param('id', uuid) id: string) {
+    return this.listTools(session.user.id, id, false);
   }
 
-  @Post()
+  @Get('public-collections/:id/tools')
+  @Header('Cache-Control', 'private, no-store')
+  listPublic(@Session() session: UserSession, @Param('id', uuid) id: string) {
+    return this.listTools(session.user.id, id, true);
+  }
+
+  private listTools(userId: string, id: string, publicOnly: boolean) {
+    return this.prisma.$transaction(async (tx) => {
+      const collection = await this.collections.findOne(
+        userId,
+        id,
+        tx,
+        publicOnly,
+      );
+      const links = await this.links.forCollection(id, tx);
+      if (collection.visibility === 'PUBLIC') {
+        return this.tools.findCollectionToolSummaries(
+          links.map((link) => link.toolId),
+          tx,
+        );
+      }
+
+      const owned = await this.tools.findManyByIds(
+        userId,
+        links.map((link) => link.toolId),
+        tx,
+      );
+      const ownedIds = new Set(owned.map((tool) => tool.id));
+      // Verified contributions survive privatization with their public field set.
+      const contributed = await this.tools.findCollectionToolSummaries(
+        links
+          .filter(
+            (link) => link.addedByUserId !== null && !ownedIds.has(link.toolId),
+          )
+          .map((link) => link.toolId),
+        tx,
+      );
+      return [...owned, ...contributed];
+    });
+  }
+
+  @Post('collections/:id/tools')
   add(
     @Session() session: UserSession,
     @Param('id', uuid) id: string,
@@ -54,11 +93,11 @@ export class LinksController {
     return this.prisma.$transaction(async (tx) => {
       await this.collections.findOne(session.user.id, id, tx);
       await this.tools.findOne(session.user.id, dto.toolId, tx);
-      return this.links.add(dto.toolId, id, tx);
+      return this.links.add(dto.toolId, id, session.user.id, tx);
     });
   }
 
-  @Delete(':toolId')
+  @Delete('collections/:id/tools/:toolId')
   @HttpCode(204)
   async remove(
     @Session() session: UserSession,
@@ -67,7 +106,6 @@ export class LinksController {
   ) {
     await this.prisma.$transaction(async (tx) => {
       await this.collections.findOne(session.user.id, id, tx);
-      await this.tools.findOne(session.user.id, toolId, tx);
       await this.links.remove(toolId, id, tx);
     });
   }
