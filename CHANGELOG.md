@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Add 18 CETECH department tags, multi-tag editing, tag badges and combined department filters in My Tools.
+- Seed the department catalog alongside the existing categories. Keep tool tags out of collection tool summaries.
+
 ## [0.1.4]
 
 - Automatically run the existing idempotent eight-category Prisma seed after successful database migrations in the shared staging/production Dokploy Compose migration service.

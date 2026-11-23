@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import AddToolModal from "./add-tool-modal";
+import type { DepartmentCatalog } from "./department-picker";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,6 +18,8 @@ import { apiRequest, type AccessType, type Tool, type ToolCategory } from "@/lib
 interface ToolCardProps {
   tool: Tool;
   categories: ToolCategory[];
+  departmentCatalog: DepartmentCatalog;
+  onRetryDepartments: () => void;
   onUpdated: (tool: Tool) => void;
   onDeleted: (id: string) => void;
 }
@@ -53,6 +57,8 @@ function getSafeWebsiteUrl(value: string | null): string | null {
 export default function ToolCard({
   tool,
   categories,
+  departmentCatalog,
+  onRetryDepartments,
   onUpdated,
   onDeleted,
 }: ToolCardProps) {
@@ -134,6 +140,21 @@ export default function ToolCard({
           </span>
         </div>
 
+        {tool.tags.length > 0 && (
+          <ul aria-label="Tags" className="mt-3 flex flex-wrap gap-1.5">
+            {tool.tags.slice(0, 2).map(({ id, name }) => (
+              <li key={id} className="min-w-0 max-w-full">
+                <Badge variant="secondary" title={name} className="max-w-full">
+                  <span className="truncate">{name}</span>
+                </Badge>
+              </li>
+            ))}
+            {tool.tags.length > 2 && (
+              <li><Badge variant="outline">+{tool.tags.length - 2} more</Badge></li>
+            )}
+          </ul>
+        )}
+
         <p className="mt-5 min-h-12 flex-1 text-sm leading-6 text-slate-600">
           {tool.description || "No description provided."}
         </p>
@@ -186,6 +207,20 @@ export default function ToolCard({
               <p className="whitespace-pre-wrap break-words">
                 {details.description || "No description provided."}
               </p>
+              {details.tags.length > 0 && (
+                <div className="grid gap-2">
+                  <h3 className="text-sm font-medium">Tags</h3>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {details.tags.map(({ id, name }) => (
+                      <li key={id} className="max-w-full">
+                        <Badge variant="secondary" className="h-auto max-w-full whitespace-normal">
+                          {name}
+                        </Badge>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {detailsWebsite ? (
                 <a
                   href={detailsWebsite}
@@ -227,6 +262,8 @@ export default function ToolCard({
       {editing && details && (
         <AddToolModal
           categories={categories}
+          departmentCatalog={departmentCatalog}
+          onRetryDepartments={onRetryDepartments}
           tool={details}
           onClose={() => setEditing(false)}
           onSaved={(updated) => {
