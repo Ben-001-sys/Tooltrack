@@ -49,6 +49,16 @@ pnpm dev:api
 
 The frontend will use port 3000 and the backend will use port 3001.
 
+## Department tags
+
+A tool has one category and can have several tags. Department tags describe where software is used. Collections group saved tools independently of their categories and tags.
+
+In My Tools, open **Department Tags** during the details step of Add Tool or when editing. Search by department name and select or clear any checkboxes. Cards show up to two badges and an overflow count. Tool Details shows all attached tags. **Filter by department** matches any selected department and applies together with search, category and access-type filters. Filters run on the tools loaded by the page. The API list returns at most the 100 most recently created tools.
+
+Tool Management owns the `Tag` catalog and the `ToolTag` junction. Each tool/tag pair is unique. Deleting a tool cascades to its junction rows and preserves the shared tags. Tool owners receive their tag assignments through the authenticated Tools API. Collection tool summaries omit tag assignments, including summaries used for public collaboration.
+
+The existing Prisma seed upserts all 18 CETECH departments as system-managed `DEPARTMENT` tags and keeps the eight default categories. For local setup, apply migrations with `pnpm db:deploy`, then run `pnpm --dir apps/api exec prisma db seed`. The deployment initializer already runs the seed after a successful migration. Additional tags can be inserted through a controlled seed or administrative process using a unique, stable lowercase slug. Adding a tag row requires no schema migration, and the Department Tags picker displays only `DEPARTMENT` entries.
+
 ## Collaboration
 
 - main is the stable branch.

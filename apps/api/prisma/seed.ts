@@ -1,4 +1,3 @@
-
 import { resolve } from 'node:path';
 
 import { config } from 'dotenv';
@@ -14,9 +13,7 @@ config({
 const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {
-  throw new Error(
-    'DATABASE_URL must be configured before seeding.',
-  );
+  throw new Error('DATABASE_URL must be configured before seeding.');
 }
 
 const prisma = new PrismaClient({
@@ -60,6 +57,39 @@ const categories = [
   },
 ] as const;
 
+const departments = [
+  ['finance-accounting-credit-control', 'Finance, Accounting & Credit Control'],
+  [
+    'marketing-e-commerce-business-development',
+    'Marketing, E-Commerce & Business Development',
+  ],
+  ['sales-commercial-operations', 'Sales & Commercial Operations'],
+  ['sourcing-procurement', 'Sourcing & Procurement'],
+  ['operations', 'Operations'],
+  ['production', 'Production'],
+  ['delivery-logistics', 'Delivery & Logistics'],
+  ['customer-experience-support', 'Customer Experience & Support (CES)'],
+  ['human-resources', 'Human Resources'],
+  ['quality-management', 'Quality Management'],
+  ['research-development', 'Research & Development'],
+  ['legal-public-relations', 'Legal & Public Relations'],
+  [
+    'inventory-fulfillment-warehouse-management',
+    'Inventory, Fulfillment & Warehouse Management',
+  ],
+  ['security-loss-prevention', 'Security & Loss Prevention'],
+  [
+    'information-technology-digital-systems',
+    'Information Technology (IT) & Digital Systems',
+  ],
+  ['executive-management', 'Executive Management'],
+  [
+    'administration-facilities-management',
+    'Administration & Facilities Management',
+  ],
+  ['product-management-merchandising', 'Product Management & Merchandising'],
+] as const;
+
 async function main(): Promise<void> {
   for (const category of categories) {
     await prisma.category.upsert({
@@ -76,17 +106,29 @@ async function main(): Promise<void> {
     });
   }
 
-  const total = await prisma.category.count();
+  for (const [department, name] of departments) {
+    const slug = `cetech-${department}`;
+    const tag = {
+      name: `${name} - CETECH`,
+      kind: 'DEPARTMENT',
+      isSystem: true,
+    } as const;
+    await prisma.tag.upsert({
+      where: { slug },
+      update: tag,
+      create: { slug, ...tag },
+    });
+  }
 
   console.log(
-    `Category seeding completed. Total categories: ${total}`,
+    `Seeded ${categories.length} default categories and ${departments.length} CETECH department tags.`,
   );
 }
 
 try {
   await main();
 } catch (error) {
-  console.error('Category seeding failed:', error);
+  console.error('Category and department tag seeding failed:', error);
   process.exitCode = 1;
 } finally {
   await prisma.$disconnect();

@@ -1,11 +1,13 @@
 import { Transform, type TransformFnParams } from 'class-transformer';
 import {
+  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
+import { CollectionVisibility } from '../generated/prisma/client.js';
 
 const trim = ({ value }: TransformFnParams): unknown =>
   typeof value === 'string' ? value.trim() : value;
@@ -26,4 +28,10 @@ export class CollectionDto {
   @IsString({ always: true })
   @MaxLength(1500, { always: true })
   description?: string | null;
+
+  @ValidateIf((_object: unknown, value: unknown) => value !== undefined, {
+    always: true,
+  })
+  @IsEnum(CollectionVisibility, { always: true })
+  visibility?: CollectionVisibility;
 }

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   ParseUUIDPipe,
@@ -11,6 +12,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { Session, type UserSession } from '@thallesp/nestjs-better-auth';
+import type { Collection } from '../generated/prisma/client.js';
 import { CollectionDto } from './collection.dto.js';
 import { CollectionsService } from './collections.service.js';
 
@@ -28,40 +30,91 @@ const updateBody = new ValidationPipe({
 });
 const uuid = new ParseUUIDPipe({ version: '4' });
 
+function presentCollection(
+  { userId, ...collection }: Collection & { toolCount?: number },
+  actorId: string,
+) {
+  const isOwner = userId === actorId;
+  return { ...collection, isOwner, ...(isOwner ? { userId } : {}) };
+}
+
 @Controller('api/v1/collections')
 export class CollectionsController {
   constructor(private readonly collections: CollectionsService) {}
 
   @Get()
-  list(@Session() session: UserSession) {
-    return this.collections.list(session.user.id);
+  @Header('Cache-Control', 'private, no-store')
+  async list(@Session() session: UserSession) {
+    const collections = await this.collections.list(session.user.id);
+    return collections.map((collection) =>
+      presentCollection(collection, session.user.id),
+    );
   }
 
   @Post()
-  create(
+  async create(
     @Session() session: UserSession,
     @Body(createBody) dto: CollectionDto,
   ) {
-    return this.collections.create(session.user.id, dto);
+    return presentCollection(
+      await this.collections.create(session.user.id, dto),
+      session.user.id,
+    );
   }
 
   @Get(':id')
-  findOne(@Session() session: UserSession, @Param('id', uuid) id: string) {
-    return this.collections.findOne(session.user.id, id);
+  @Header('Cache-Control', 'private, no-store')
+  async findOne(
+    @Session() session: UserSession,
+    @Param('id', uuid) id: string,
+  ) {
+    return presentCollection(
+      await this.collections.findOne(session.user.id, id),
+      session.user.id,
+    );
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Session() session: UserSession,
     @Param('id', uuid) id: string,
     @Body(updateBody) dto: CollectionDto,
   ) {
-    return this.collections.update(session.user.id, id, dto);
+    return presentCollection(
+      await this.collections.update(session.user.id, id, dto),
+      session.user.id,
+    );
   }
 
   @Delete(':id')
   @HttpCode(204)
   async remove(@Session() session: UserSession, @Param('id', uuid) id: string) {
     await this.collections.remove(session.user.id, id);
+  }
+}
+
+@Controller('api/v1/public-collections')
+export class PublicCollectionsController {
+  constructor(private readonly collections: CollectionsService) {}
+
+  @Get()
+  @Header('Cache-Control', 'private, no-store')
+  async list(@Session() session: UserSession) {
+    const collections = await this.collections.listPublic();
+    return collections.map((collection) =>
+      presentCollection(collection, session.user.id),
+    );
+  }
+
+  @Get(':id')
+  @Header('Cache-Control', 'private, no-store')
+  async findOne(
+    @Session() session: UserSession,
+    @Param('id', uuid) id: string,
+  ) {
+    return presentCollection(
+      await this.collections.findOne(session.user.id, id, undefined, true),
+      session.user.id,
+    );
   }
 }

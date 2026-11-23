@@ -6,6 +6,8 @@ const schema = readFileSync('apps/api/prisma/schema.prisma', 'utf8');
 const ownership = {
   Category: 'tools',
   Tool: 'tools',
+  Tag: 'tools',
+  ToolTag: 'tools',
   Collection: 'collections',
   // The link module owns scalar-ID associations across tools and collections.
   // No cross-module Prisma relations are introduced.

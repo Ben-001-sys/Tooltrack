@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.4]
+
+- Add collaborative public/private Collections: owners control visibility, and signed-in users can view, edit, contribute tools to, remove links from, and delete public collections. Private collections remain owner-only.
+- Preserve individual Tool ownership and restricted public tool summaries for cross-user collection contributions; prevent disclosure of private Tool notes and department tags.
+- Add 18 CETECH department tags, multi-tag editing, tag badges, and combined department filtering in My Tools.
+- Seed the department catalog alongside the existing categories. Keep tool tags out of collection tool summaries.
+- Automatically run the existing idempotent eight-category Prisma seed after successful database migrations in the shared staging/production Dokploy Compose migration service.
+- Block API/Web startup when migration or seeding fails; preserve existing databases, volumes, authentication secrets and deployment approval gates.
+- Test automatic initialization and repeat seeding against disposable PostgreSQL, and verify failure of either initialization stage prevents application startup.
+
 ## [0.1.3]
 
 - Accept the exact Dokploy Docker volume-list label format (`Labels` as a comma-separated string) in the first-production safety preflight, while keeping support for object-shaped Docker labels.

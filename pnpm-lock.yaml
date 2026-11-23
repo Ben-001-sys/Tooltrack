@@ -7,6 +7,7 @@ settings:
 overrides:
   '@nestjs/mau>undici': 6.29.1
   external-editor>tmp: 0.2.7
+  '@prisma/config>effect': 3.22.1
 
 importers:
 
@@ -2849,8 +2850,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@3.20.0:
-    resolution: {integrity: sha512-qMLfDJscrNG8p/aw+IkT9W7fgj50Z4wG5bLBy0Txsxz8iUHjDIkOgO3SV0WZfnQbNG2VJYb0b+rDLMrhM4+Krw==}
+  effect@3.22.1:
+    resolution: {integrity: sha512-TNoXushmPOBAjJlthF5d2QwnX2xBPEtcNJr5XKNKbRLbDvBcOYkXlYDfvGfSA0zriwLFuCll5MDtNMAdZL17PQ==}
 
   electron-to-chromium@1.5.481:
     resolution: {integrity: sha512-dNUsbAP6E2S1dHIYEuN3cQ0dViThjMtpVRheGdvv5HgHFtzLi4Cu4Mbzms85YggP3Eh2VVZTl5+XxEN8ofCbmQ==}
@@ -6313,7 +6314,7 @@ snapshots:
     dependencies:
       c12: 3.3.4(magicast@0.5.5)
       deepmerge-ts: 8.0.2
-      effect: 3.20.0
+      effect: 3.22.1
       empathic: 2.0.0
     transitivePeerDependencies:
       - magicast
@@ -7719,7 +7720,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@3.20.0:
+  effect@3.22.1:
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 3.23.2

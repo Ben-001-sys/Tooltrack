@@ -1,8 +1,16 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { promisify } from 'node:util';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
+
+const run = promisify(execFile);
+const seedDatabase = () =>
+  run(process.execPath, ['--import', 'tsx', 'prisma/seed.ts'], {
+    env: { ...process.env, DATABASE_URL: process.env.TEST_DATABASE_URL },
+  });
 
 describe('compiled API against disposable PostgreSQL', () => {
   let child: ChildProcess;
@@ -333,6 +341,7 @@ describe('compiled API against disposable PostgreSQL', () => {
       expect(collection).toMatchObject({
         name: 'Development Stack',
         description: 'Shared tools',
+        visibility: 'PRIVATE',
       });
       const second = await create('/collections', { name: 'AI Tools' });
       const tool = await create('/tools', {
@@ -572,6 +581,712 @@ describe('compiled API against disposable PostgreSQL', () => {
       });
       await prisma.tool.deleteMany({ where: { id: { in: toolIds } } });
       await prisma.category.delete({ where: { id: category.id } });
+      await prisma.$disconnect();
+    }
+  }, 30_000);
+
+  it('preserves existing collections and links when migrating visibility', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const rollback = new Error('Roll back isolated migration fixture');
+    const migration = (name: string) =>
+      readFile(
+        new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
+        'utf8',
+      );
+    const [before, after] = await Promise.all([
+      migration('20261116133000_add_collections_and_tool_links'),
+      migration('20261123120000_add_collection_visibility'),
+    ]);
+    try {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          const schema = `migration_${crypto.randomUUID().replaceAll('-', '')}`;
+          await tx.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
+          await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${schema}"`);
+          const apply = async (sql: string) => {
+            for (const statement of sql.split(';').map((part) => part.trim())) {
+              if (statement) await tx.$executeRawUnsafe(statement);
+            }
+          };
+          await apply(before);
+          const id = crypto.randomUUID();
+          const toolId = crypto.randomUUID();
+          await tx.$executeRaw`
+            INSERT INTO collections (id, "userId", name, "updatedAt")
+            VALUES (${id}::uuid, 'legacy-owner', 'Legacy collection', now())
+          `;
+          await tx.$executeRaw`
+            INSERT INTO tool_collection_links (id, "collectionId", "toolId")
+            VALUES (${crypto.randomUUID()}::uuid, ${id}::uuid, ${toolId}::uuid)
+          `;
+          await apply(after);
+          expect(
+            await tx.$queryRaw`
+            SELECT c.name, c."userId", c.visibility::text, l."toolId", l."addedByUserId"
+            FROM collections c JOIN tool_collection_links l ON l."collectionId" = c.id
+            WHERE c.id = ${id}::uuid
+          `,
+          ).toEqual([
+            {
+              name: 'Legacy collection',
+              userId: 'legacy-owner',
+              visibility: 'PRIVATE',
+              toolId,
+              addedByUserId: null,
+            },
+          ]);
+          throw rollback;
+        }),
+      ).rejects.toBe(rollback);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  it('lets three signed-in users collaborate on public collections without sharing Tool ownership', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const category = await prisma.category.create({
+      data: {
+        name: `Collaboration ${crypto.randomUUID()}`,
+        slug: crypto.randomUUID(),
+      },
+    });
+    const users: string[] = [];
+    const emails: string[] = [];
+    const collections: string[] = [];
+    const discovery = '/public-collections';
+    function request(
+      actor: string,
+      method: string,
+      path: string,
+      body?: object,
+    ) {
+      return fetch(`${base}/api/v1${path}`, {
+        method,
+        headers: {
+          cookie: actor,
+          origin: base,
+          'content-type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    }
+    async function create(actor: string, path: string, data: object) {
+      const response = await request(actor, 'POST', path, data);
+      expect(response.status).toBe(201);
+      const record = (await response.json()) as { id: string };
+      if (path === '/collections') collections.push(record.id);
+      return record;
+    }
+    try {
+      for (const [index, name] of [
+        'Emmanuel',
+        'Benjamin',
+        'Contributor',
+      ].entries()) {
+        cookie = '';
+        const email = `collaborator-${crypto.randomUUID()}@example.com`;
+        emails.push(email);
+        const registration = await post(
+          'sign-up/email',
+          { email, password, name },
+          `192.0.2.${20 + index}`,
+        );
+        expect(registration.status).toBe(200);
+        users.push(cookie);
+      }
+      const [owner, collaborator, contributor] = users;
+      const saved = await Promise.all(
+        users.map((actor, index) =>
+          create(actor, '/tools', {
+            name: ['Terminal', 'VS Code', 'Docker'][index],
+            description: 'Private notes',
+            websiteUrl: 'https://example.com/tool?token=private#notes',
+            accessType: 'FREE',
+            categoryId: category.id,
+          }),
+        ),
+      );
+      const collection = await create(owner, '/collections', {
+        name: 'Development Tools',
+      });
+      const path = `/collections/${collection.id}`;
+      const publicPath = `${discovery}/${collection.id}`;
+      const linkPath = `${path}/tools`;
+
+      for (const route of [discovery, publicPath, `${publicPath}/tools`]) {
+        expect((await request('', 'GET', route)).status).toBe(401);
+      }
+      expect(await (await request(owner, 'GET', path)).json()).toMatchObject({
+        visibility: 'PRIVATE',
+        isOwner: true,
+      });
+      expect(
+        await (await request(collaborator, 'GET', discovery)).json(),
+      ).not.toContainEqual(expect.objectContaining({ id: collection.id }));
+      expect((await request(owner, 'GET', publicPath)).status).toBe(404);
+      expect((await request(owner, 'GET', `${publicPath}/tools`)).status).toBe(
+        404,
+      );
+      for (const visibility of [null, 'public', 'SHARED', 1]) {
+        expect(
+          (await request(owner, 'PATCH', path, { visibility })).status,
+        ).toBe(400);
+        expect(
+          (
+            await request(owner, 'POST', '/collections', {
+              name: 'Invalid',
+              visibility,
+            })
+          ).status,
+        ).toBe(400);
+      }
+      expect(
+        (await request(owner, 'PATCH', path, { visibility: 'PUBLIC' })).status,
+      ).toBe(200);
+      expect(
+        await (await request(collaborator, 'GET', '/collections')).json(),
+      ).toEqual([]);
+      expect(
+        await (await request(collaborator, 'GET', discovery)).json(),
+      ).toContainEqual(
+        expect.objectContaining({
+          id: collection.id,
+          visibility: 'PUBLIC',
+          isOwner: false,
+          toolCount: 0,
+        }),
+      );
+      for (const route of [path, publicPath]) {
+        const response = await request(collaborator, 'GET', route);
+        expect(response.status).toBe(200);
+        expect(response.headers.get('cache-control')).toContain('no-store');
+        const body: unknown = await response.json();
+        expect(body).toMatchObject({
+          id: collection.id,
+          visibility: 'PUBLIC',
+          isOwner: false,
+        });
+        expect(body).not.toHaveProperty('userId');
+      }
+      expect(
+        (
+          await request(collaborator, 'PATCH', path, {
+            name: 'Must not change',
+            visibility: 'PRIVATE',
+          })
+        ).status,
+      ).toBe(403);
+      expect(await (await request(owner, 'GET', path)).json()).toMatchObject({
+        name: 'Development Tools',
+        visibility: 'PUBLIC',
+      });
+      expect(
+        await (
+          await request(collaborator, 'PATCH', path, {
+            name: 'Developer Tools',
+            description: 'Shared development tools',
+          })
+        ).json(),
+      ).toMatchObject({
+        name: 'Developer Tools',
+        description: 'Shared development tools',
+      });
+      expect(
+        (await request(collaborator, 'POST', linkPath, { toolId: saved[0].id }))
+          .status,
+      ).toBe(404);
+      for (const [index, actor] of users.entries()) {
+        expect(
+          (await request(actor, 'POST', linkPath, { toolId: saved[index].id }))
+            .status,
+        ).toBe(201);
+      }
+      expect(
+        (await request(collaborator, 'POST', linkPath, { toolId: saved[1].id }))
+          .status,
+      ).toBe(409);
+      expect(
+        await (await request(collaborator, 'GET', discovery)).json(),
+      ).toContainEqual(
+        expect.objectContaining({ id: collection.id, toolCount: 3 }),
+      );
+      for (const route of [linkPath, `${publicPath}/tools`]) {
+        const response = await request(contributor, 'GET', route);
+        expect(response.status).toBe(200);
+        const items: unknown = await response.json();
+        expect(items).toHaveLength(3);
+        expect(items).toEqual(
+          expect.arrayContaining(
+            saved.map(({ id }, index) => ({
+              id,
+              name: ['Terminal', 'VS Code', 'Docker'][index],
+              websiteUrl: 'https://example.com/tool',
+              accessType: 'FREE',
+              category: { name: category.name },
+            })),
+          ),
+        );
+      }
+      const ownerTool = `/tools/${saved[0].id}`;
+      for (const method of ['GET', 'PATCH', 'DELETE']) {
+        expect(
+          (
+            await request(
+              collaborator,
+              method,
+              ownerTool,
+              method === 'PATCH' ? { name: 'Stolen' } : undefined,
+            )
+          ).status,
+        ).toBe(404);
+      }
+      expect(
+        (await request(contributor, 'DELETE', `${linkPath}/${saved[1].id}`))
+          .status,
+      ).toBe(204);
+      expect(
+        (await request(collaborator, 'GET', `/tools/${saved[1].id}`)).status,
+      ).toBe(200);
+
+      // Hold an uncommitted privatization until PostgreSQL confirms the link request is blocked.
+      for (const [method, suffix, body] of [
+        ['POST', '', { toolId: saved[1].id }],
+        ['DELETE', `/${saved[2].id}`, undefined],
+      ] as const) {
+        expect(
+          (await request(owner, 'PATCH', path, { visibility: 'PUBLIC' }))
+            .status,
+        ).toBe(200);
+        let pending: Promise<Response> | undefined;
+        await prisma.$transaction(async (tx) => {
+          await tx.collection.update({
+            where: { id: collection.id },
+            data: { visibility: 'PRIVATE' },
+          });
+          pending = request(collaborator, method, `${linkPath}${suffix}`, body);
+          let blocked = false;
+          for (let attempt = 0; attempt < 100 && !blocked; attempt++) {
+            const [result] = await tx.$queryRaw<{ blocked: boolean }[]>`
+              SELECT EXISTS (
+                SELECT FROM pg_locks
+                WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
+              ) AS blocked
+            `;
+            blocked = result.blocked;
+            if (!blocked)
+              await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          expect(blocked).toBe(true);
+        });
+        expect((await pending)?.status).toBe(404);
+      }
+      expect(
+        await (await request(contributor, 'GET', discovery)).json(),
+      ).not.toContainEqual(expect.objectContaining({ id: collection.id }));
+      for (const route of [path, linkPath, publicPath, `${publicPath}/tools`]) {
+        expect((await request(contributor, 'GET', route)).status).toBe(404);
+      }
+      expect(
+        (await request(contributor, 'PATCH', path, { name: 'Revoked' })).status,
+      ).toBe(404);
+      expect((await request(contributor, 'DELETE', path)).status).toBe(404);
+      const privateTools: unknown = await (
+        await request(owner, 'GET', linkPath)
+      ).json();
+      expect(privateTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: saved[0].id,
+            description: 'Private notes',
+          }),
+          {
+            id: saved[2].id,
+            name: 'Docker',
+            websiteUrl: 'https://example.com/tool',
+            accessType: 'FREE',
+            category: { name: category.name },
+          },
+        ]),
+      );
+      expect(privateTools).toHaveLength(2);
+      expect(
+        (await request(owner, 'PATCH', path, { visibility: 'PUBLIC' })).status,
+      ).toBe(200);
+      expect((await request(collaborator, 'DELETE', path)).status).toBe(204);
+      expect(
+        await prisma.toolCollectionLink.count({
+          where: { collectionId: collection.id },
+        }),
+      ).toBe(0);
+      expect((await request(owner, 'GET', path)).status).toBe(404);
+      for (const [index, actor] of users.entries()) {
+        expect(
+          (await request(actor, 'GET', `/tools/${saved[index].id}`)).status,
+        ).toBe(200);
+      }
+      const publicAtCreation = await create(owner, '/collections', {
+        name: 'Published',
+        visibility: 'PUBLIC',
+      });
+      expect(
+        (
+          await request(
+            contributor,
+            'GET',
+            `${discovery}/${publicAtCreation.id}`,
+          )
+        ).status,
+      ).toBe(200);
+    } finally {
+      await prisma.toolCollectionLink.deleteMany({
+        where: { collectionId: { in: collections } },
+      });
+      await prisma.collection.deleteMany({
+        where: { id: { in: collections } },
+      });
+      await prisma.tool.deleteMany({ where: { categoryId: category.id } });
+      await prisma.category.delete({ where: { id: category.id } });
+      await prisma.user.deleteMany({ where: { email: { in: emails } } });
+      await prisma.$disconnect();
+    }
+  }, 30_000);
+  it('migrates an existing tool and category without adding associations', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const migration = (name: string) =>
+      readFile(
+        new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
+        'utf8',
+      );
+    const [before, after] = await Promise.all([
+      migration('20261113132308_init_tools'),
+      migration('20261123130000_add_tool_tags'),
+    ]);
+    const rollback = new Error('Roll back isolated migration fixture');
+    try {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          const schema = `tag_migration_${crypto.randomUUID().replaceAll('-', '')}`;
+          await tx.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
+          await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${schema}"`);
+          async function apply(sql: string) {
+            for (const statement of sql.split(';').map((part) => part.trim())) {
+              if (statement) await tx.$executeRawUnsafe(statement);
+            }
+          }
+          await apply(before);
+          const toolId = crypto.randomUUID();
+          const categoryId = crypto.randomUUID();
+          await tx.$executeRaw`
+          INSERT INTO categories (id, name, slug, "updatedAt")
+          VALUES (${categoryId}::uuid, 'Legacy category', 'legacy-category', now())
+        `;
+          await tx.$executeRaw`
+          INSERT INTO tools (id, "userId", name, "accessType", "categoryId", "updatedAt")
+          VALUES (${toolId}::uuid, 'legacy-owner', 'Legacy tool', 'FREE', ${categoryId}::uuid, now())
+        `;
+          await apply(after);
+          expect(
+            await tx.$queryRaw`
+          SELECT t.id, t."userId", c.name AS category, l."tagId"
+          FROM tools t JOIN categories c ON t."categoryId" = c.id
+          LEFT JOIN tool_tags l ON l."toolId" = t.id
+          WHERE t.id = ${toolId}::uuid
+        `,
+          ).toEqual([
+            {
+              id: toolId,
+              userId: 'legacy-owner',
+              category: 'Legacy category',
+              tagId: null,
+            },
+          ]);
+          throw rollback;
+        }),
+      ).rejects.toBe(rollback);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  it('seeds all CETECH departments and default categories idempotently', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const tags = () =>
+      prisma.tag.findMany({
+        where: { slug: { startsWith: 'cetech-' } },
+        orderBy: { slug: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          kind: true,
+          isSystem: true,
+        },
+      });
+    try {
+      await seedDatabase();
+      const first = await tags();
+      await seedDatabase();
+      expect(await tags()).toEqual(first);
+      expect(first).toHaveLength(18);
+      expect(first.map(({ name }) => name).sort()).toEqual(
+        [
+          'Finance, Accounting & Credit Control',
+          'Marketing, E-Commerce & Business Development',
+          'Sales & Commercial Operations',
+          'Sourcing & Procurement',
+          'Operations',
+          'Production',
+          'Delivery & Logistics',
+          'Customer Experience & Support (CES)',
+          'Human Resources',
+          'Quality Management',
+          'Research & Development',
+          'Legal & Public Relations',
+          'Inventory, Fulfillment & Warehouse Management',
+          'Security & Loss Prevention',
+          'Information Technology (IT) & Digital Systems',
+          'Executive Management',
+          'Administration & Facilities Management',
+          'Product Management & Merchandising',
+        ]
+          .map((name) => `${name} - CETECH`)
+          .sort(),
+      );
+      expect(
+        first.every((tag) => tag.isSystem && tag.kind === 'DEPARTMENT'),
+      ).toBe(true);
+      expect(
+        await prisma.category.findMany({
+          select: { slug: true },
+          orderBy: { slug: 'asc' },
+        }),
+      ).toEqual(
+        [
+          'ai',
+          'business',
+          'communication',
+          'design',
+          'development',
+          'e-commerce',
+          'other',
+          'productivity',
+        ].map((slug) => ({ slug })),
+      );
+      await expect(
+        prisma.tag.create({
+          data: {
+            name: first[0].name.toLowerCase(),
+            slug: 'ambiguous-name',
+            kind: 'GENERAL',
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+    } finally {
+      await prisma.$disconnect();
+    }
+  }, 20_000);
+
+  it('validates, reads and replaces owner tags atomically while preserving collection links', async () => {
+    await seedDatabase();
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const category = await prisma.category.findUniqueOrThrow({
+      where: { slug: 'productivity' },
+    });
+    const emails: string[] = [];
+    const name = `Tagged tool ${crypto.randomUUID()}`;
+    const toolIds: string[] = [];
+    let collectionId: string | undefined;
+    function request(
+      method: string,
+      path: string,
+      body?: object,
+      actor = cookie,
+    ) {
+      return fetch(`${base}/api/v1${path}`, {
+        method,
+        headers: {
+          cookie: actor,
+          origin: base,
+          'content-type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    }
+    async function register(ip: string) {
+      cookie = '';
+      const email = `tags-${crypto.randomUUID()}@example.com`;
+      emails.push(email);
+      expect(
+        (
+          await post(
+            'sign-up/email',
+            { email, password, name: 'Tag tester' },
+            ip,
+          )
+        ).status,
+      ).toBe(200);
+      return cookie;
+    }
+    async function createTool(body: object) {
+      const response = await request('POST', '/tools', body);
+      expect(response.status).toBe(201);
+      const tool = (await response.json()) as {
+        id: string;
+        tags: { id: string }[];
+      };
+      toolIds.push(tool.id);
+      return tool;
+    }
+    try {
+      const owner = await register('192.0.2.40');
+      expect((await request('GET', '/tags', undefined, '')).status).toBe(401);
+      const response = await request('GET', '/tags');
+      expect(response.status).toBe(200);
+      const catalog = (await response.json()) as {
+        id: string;
+        name: string;
+        slug: string;
+        kind: string;
+      }[];
+      expect(catalog).toHaveLength(18);
+      expect(catalog.map((tag) => tag.name)).toEqual(
+        catalog.map((tag) => tag.name).sort(),
+      );
+      const [first, second, third] = catalog;
+      expect(first).toEqual({
+        id: expect.any(String),
+        name: expect.any(String),
+        slug: expect.any(String),
+        kind: 'DEPARTMENT',
+      });
+
+      const fields = { name, accessType: 'FREE', categoryId: category.id };
+      expect((await createTool(fields)).tags).toEqual([]);
+      const ids = [first.id, second.id];
+      const tool = await createTool({ ...fields, tagIds: ids });
+      expect(tool.tags).toEqual([first, second]);
+      const path = `/tools/${tool.id}`;
+      expect(await (await request('GET', '/tools')).json()).toContainEqual(
+        expect.objectContaining({ id: tool.id, tags: [first, second] }),
+      );
+      expect(await (await request('GET', path)).json()).toMatchObject({
+        tags: [first, second],
+      });
+      await expect(
+        prisma.toolTag.create({
+          data: { toolId: tool.id, tagId: first.id },
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+
+      for (const tagIds of [
+        null,
+        first.id,
+        ['invalid'],
+        [first.id, first.id.toUpperCase()],
+        Array.from({ length: 51 }, () => crypto.randomUUID()),
+        [first.id, crypto.randomUUID()],
+      ]) {
+        expect(
+          (await request('POST', '/tools', { ...fields, tagIds })).status,
+        ).toBe(400);
+        expect(
+          (await request('PATCH', path, { tagIds, name: 'Must roll back' }))
+            .status,
+        ).toBe(400);
+      }
+      expect(await prisma.tool.count({ where: { name } })).toBe(2);
+      expect(await (await request('GET', path)).json()).toMatchObject({
+        name,
+        tags: [first, second],
+      });
+
+      const collaborator = await register('192.0.2.41');
+      expect(
+        (await request('PATCH', path, { tagIds: [third.id] }, collaborator))
+          .status,
+      ).toBe(404);
+      expect((await request('GET', path)).status).toBe(404);
+      cookie = owner;
+      for (const [body, tags] of [
+        [{ description: 'Preserve selections' }, [first, second]],
+        [{ tagIds: [...ids, third.id] }, [first, second, third]],
+        [{ tagIds: [second.id, third.id] }, [second, third]],
+        [{ tagIds: [] }, []],
+      ] as const) {
+        const updated = await request('PATCH', path, body);
+        expect(updated.status).toBe(200);
+        expect(await updated.json()).toMatchObject({ tags });
+      }
+
+      const replacements = [[first], [second, third]];
+      const updates = await Promise.all(
+        replacements.map((tags) =>
+          request('PATCH', path, { tagIds: tags.map(({ id }) => id) }),
+        ),
+      );
+      for (const [index, updated] of updates.entries()) {
+        expect(updated.status).toBe(200);
+        expect(await updated.json()).toMatchObject({
+          tags: replacements[index],
+        });
+      }
+      const current = (await (await request('GET', path)).json()) as {
+        tags: unknown;
+      };
+      expect(replacements).toContainEqual(current.tags);
+
+      const collection = await request('POST', '/collections', {
+        name: 'Tag privacy fixture',
+      });
+      expect(collection.status).toBe(201);
+      collectionId = ((await collection.json()) as { id: string }).id;
+      const linked = `/collections/${collectionId}/tools`;
+      expect((await request('POST', linked, { toolId: tool.id })).status).toBe(
+        201,
+      );
+      const [summary] = (await (
+        await request('GET', linked)
+      ).json()) as unknown[];
+      expect(summary).toMatchObject({ id: tool.id });
+      expect(summary).not.toHaveProperty('tags');
+      expect((await request('DELETE', path)).status).toBe(204);
+      expect(await prisma.toolTag.count({ where: { toolId: tool.id } })).toBe(
+        0,
+      );
+      expect(
+        await prisma.tag.count({ where: { id: { in: [...ids, third.id] } } }),
+      ).toBe(3);
+      expect(
+        await prisma.toolCollectionLink.count({ where: { toolId: tool.id } }),
+      ).toBe(0);
+    } finally {
+      if (collectionId) {
+        await prisma.toolCollectionLink.deleteMany({ where: { collectionId } });
+        await prisma.collection.deleteMany({ where: { id: collectionId } });
+      }
+      await prisma.tool.deleteMany({ where: { id: { in: toolIds } } });
+      await prisma.user.deleteMany({ where: { email: { in: emails } } });
       await prisma.$disconnect();
     }
   }, 30_000);

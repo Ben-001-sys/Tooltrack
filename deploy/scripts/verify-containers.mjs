@@ -24,6 +24,14 @@ function compose(args, options) { return docker([...composeArgs, ...args], optio
 try {
   compose(['config', '--quiet']);
   compose(['up', '-d', '--wait', '--wait-timeout', '180'], { stdio: 'inherit' });
+  const slugs = () => docker(['exec', compose(['ps', '-q', 'postgres']).trim(),
+    'psql', '-U', 'ci', '-d', 'tooltrack_ci', '-tAc',
+    'SELECT slug FROM categories ORDER BY slug']).trim().split('\n');
+  const expectedSlugs = ['ai', 'business', 'communication', 'design',
+    'development', 'e-commerce', 'other', 'productivity'];
+  assert.deepEqual(slugs(), expectedSlugs, 'Initial deployment must seed all eight categories');
+  compose(['run', '--rm', 'migrate'], { stdio: 'inherit' });
+  assert.deepEqual(slugs(), expectedSlugs, 'Running migration/seed twice must not duplicate categories');
   const apiContainer = compose(['ps', '-q', 'api']).trim();
   const postgresContainer = compose(['ps', '-q', 'postgres']).trim();
   for (const id of [apiContainer, postgresContainer]) {

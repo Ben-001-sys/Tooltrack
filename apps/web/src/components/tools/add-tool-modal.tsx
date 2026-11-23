@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import DepartmentPicker, { type DepartmentCatalog } from "./department-picker";
 
 import {
   apiRequest,
@@ -33,6 +34,8 @@ import {
 
 interface AddToolModalProps {
   categories: ToolCategory[];
+  departmentCatalog: DepartmentCatalog;
+  onRetryDepartments: () => void;
   tool?: Tool;
   onClose: () => void;
   onSaved: (tool: Tool) => void;
@@ -62,6 +65,8 @@ const accessOptions: {
 
 export default function AddToolModal({
   categories,
+  departmentCatalog,
+  onRetryDepartments,
   tool,
   onClose,
   onSaved,
@@ -72,6 +77,11 @@ export default function AddToolModal({
 
   const [name, setName] = useState(tool?.name ?? "");
   const [categoryId, setCategoryId] = useState(tool?.categoryId ?? "");
+  const savedDepartments =
+    tool?.tags.filter(({ kind }) => kind === "DEPARTMENT") ?? [];
+  const [departmentIds, setDepartmentIds] = useState(() =>
+    savedDepartments.map(({ id }) => id),
+  );
   const [websiteUrl, setWebsiteUrl] = useState(tool?.websiteUrl ?? "");
   const [description, setDescription] = useState(tool?.description ?? "");
 
@@ -136,6 +146,15 @@ export default function AddToolModal({
       accessType,
       categoryId,
     };
+
+    if (
+      departmentIds.length !== savedDepartments.length ||
+      savedDepartments.some(({ id }) => !departmentIds.includes(id))
+    ) {
+      const otherTags =
+        tool?.tags.filter(({ kind }) => kind !== "DEPARTMENT") ?? [];
+      payload.tagIds = [...departmentIds, ...otherTags.map(({ id }) => id)];
+    }
 
     if (trimmedDescription || tool) {
       payload.description = trimmedDescription || null;
@@ -318,6 +337,15 @@ export default function AddToolModal({
                 </SelectContent>
               </Select>
             </div>
+
+            <DepartmentPicker
+              label="Department Tags (optional)"
+              catalog={departmentCatalog}
+              onRetry={onRetryDepartments}
+              selectedIds={departmentIds}
+              onChange={setDepartmentIds}
+              disabled={saving}
+            />
 
             <div className="grid gap-2">
               <Label htmlFor="tool-website">

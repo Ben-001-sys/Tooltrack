@@ -6,14 +6,19 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import AddToolModal from "@/components/tools/add-tool-modal";
+import DepartmentPicker, {
+  type DepartmentCatalog,
+} from "@/components/tools/department-picker";
 import ToolCard from "@/components/tools/tool-card";
 import { authClient } from "@/lib/auth-client";
 
 import {
   apiRequest,
+  filterTools,
   type AccessFilter,
   type Tool,
   type ToolCategory,
+  type ToolTag,
 } from "@/lib/tools";
 
 const accessFilters: {
@@ -52,6 +57,10 @@ export default function ToolsPage() {
 
   const [tools, setTools] = useState<Tool[]>([]);
   const [categories, setCategories] = useState<ToolCategory[]>([]);
+  const [departmentCatalog, setDepartmentCatalog] = useState<DepartmentCatalog>({
+    status: "loading",
+  });
+  const [departmentReload, setDepartmentReload] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -65,6 +74,7 @@ export default function ToolsPage() {
   const [accessFilter, setAccessFilter] = useState<AccessFilter>("ALL");
 
   const [categoryFilter, setCategoryFilter] = useState("ALL");
+  const [departmentFilter, setDepartmentFilter] = useState<string[]>([]);
 
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -72,6 +82,11 @@ export default function ToolsPage() {
     setLoading(true);
     setLoadError(null);
     setReloadKey((current) => current + 1);
+  }
+
+  function retryDepartments() {
+    setDepartmentCatalog({ status: "loading" });
+    setDepartmentReload((current) => current + 1);
   }
 
   useEffect(() => {
@@ -130,6 +145,24 @@ export default function ToolsPage() {
     };
   }, [userId, reloadKey]);
 
+  useEffect(() => {
+    if (!userId) return;
+    const controller = new AbortController();
+    void apiRequest<ToolTag[]>("/api/v1/tags", { signal: controller.signal })
+      .then((tags) => {
+        if (!controller.signal.aborted) {
+          setDepartmentCatalog({
+            status: "ready",
+            departments: tags.filter(({ kind }) => kind === "DEPARTMENT"),
+          });
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setDepartmentCatalog({ status: "error" });
+      });
+    return () => controller.abort();
+  }, [userId, departmentReload]);
+
   async function handleSignOut() {
     setSigningOut(true);
     setActionError(null);
@@ -166,22 +199,13 @@ export default function ToolsPage() {
     setShowAddModal(false);
   }
 
-  const filteredTools = tools.filter((tool) => {
-    const searchTerm = search.trim().toLowerCase();
-
-    const matchesSearch =
-      !searchTerm ||
-      tool.name.toLowerCase().includes(searchTerm) ||
-      (tool.description ?? "").toLowerCase().includes(searchTerm);
-
-    const matchesAccess =
-      accessFilter === "ALL" || tool.accessType === accessFilter;
-
-    const matchesCategory =
-      categoryFilter === "ALL" || tool.categoryId === categoryFilter;
-
-    return matchesSearch && matchesAccess && matchesCategory;
-  });
+  const filteredTools = filterTools(
+    tools,
+    search,
+    accessFilter,
+    categoryFilter,
+    departmentFilter,
+  );
 
   if (sessionPending) {
     return (
@@ -232,7 +256,7 @@ export default function ToolsPage() {
   return (
     <main className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
           <div>
             <p className="text-xl font-bold tracking-tight text-indigo-600">
               ToolTrack
@@ -241,8 +265,11 @@ export default function ToolsPage() {
             <p className="text-xs text-slate-500">Software Tool Manager</p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <Link href="/collections" className="text-sm font-medium text-indigo-600 hover:underline">Collections</Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <nav aria-label="Collection navigation" className="flex flex-wrap gap-3 text-sm font-medium text-indigo-600">
+              <Link href="/collections" className="hover:underline">My Collections</Link>
+              <Link href="/explore/collections" className="hover:underline">Explore Collections</Link>
+            </nav>
             <span className="hidden max-w-48 truncate text-sm text-slate-600 sm:block">
               {session.user.name}
             </span>
@@ -349,6 +376,15 @@ export default function ToolsPage() {
               </select>
             </div>
           </div>
+          <div className="mt-3">
+            <DepartmentPicker
+              label="Filter by department"
+              catalog={departmentCatalog}
+              onRetry={retryDepartments}
+              selectedIds={departmentFilter}
+              onChange={setDepartmentFilter}
+            />
+          </div>
         </section>
 
         <section aria-label="Saved software tools" className="mt-8">
@@ -423,6 +459,8 @@ export default function ToolsPage() {
                       key={tool.id}
                       tool={tool}
                       categories={categories}
+                      departmentCatalog={departmentCatalog}
+                      onRetryDepartments={retryDepartments}
                       onUpdated={(updated) => setTools((current) =>
                         current.map((item) => item.id === updated.id ? updated : item)
                       )}
@@ -441,6 +479,8 @@ export default function ToolsPage() {
       {showAddModal && (
         <AddToolModal
           categories={categories}
+          departmentCatalog={departmentCatalog}
+          onRetryDepartments={retryDepartments}
           onClose={() => setShowAddModal(false)}
           onSaved={handleCreated}
         />

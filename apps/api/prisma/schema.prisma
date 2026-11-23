@@ -15,6 +15,16 @@ enum AccessType {
   LICENSED
 }
 
+enum CollectionVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum TagKind {
+  DEPARTMENT
+  GENERAL
+}
+
 model Category {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @unique
@@ -41,6 +51,7 @@ model Tool {
   // Internal Tool Management relationship.
   categoryId  String   @db.Uuid
   category    Category @relation(fields: [categoryId],references: [id], onDelete: Restrict)
+  toolTags    ToolTag[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -53,23 +64,50 @@ model Tool {
   @@map("tools")
 }
 
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  // The migration enforces case-insensitive name uniqueness.
+  name      String
+  slug      String   @unique
+  kind      TagKind
+  isSystem  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  toolTags  ToolTag[]
+
+  @@map("tags")
+}
+
+model ToolTag {
+  toolId String @db.Uuid
+  tagId  String @db.Uuid
+  tool   Tool   @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Restrict)
+
+  @@id([toolId, tagId])
+  @@index([tagId])
+  @@map("tool_tags")
+}
+
 model Collection {
-  id          String   @id @default(uuid()) @db.Uuid
+  id          String               @id @default(uuid()) @db.Uuid
   userId      String
   name        String
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  visibility  CollectionVisibility @default(PRIVATE)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
 
   @@index([userId])
   @@map("collections")
 }
 
 model ToolCollectionLink {
-  id           String   @id @default(uuid()) @db.Uuid
-  toolId       String   @db.Uuid
-  collectionId String   @db.Uuid
-  createdAt    DateTime @default(now())
+  id            String   @id @default(uuid()) @db.Uuid
+  toolId        String   @db.Uuid
+  collectionId  String   @db.Uuid
+  addedByUserId String?
+  createdAt     DateTime @default(now())
 
   @@unique([toolId, collectionId])
   @@index([collectionId])
