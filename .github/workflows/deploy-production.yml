@@ -17,11 +17,20 @@ on:
         default: false
         type: boolean
       backup-reference:
-        description: Required for upgrades; leave empty only for an independently verified initial deployment
+        description: Required for ordinary upgrades; empty for verified initial deployment or explicit v0.1.4 unbacked upgrade
         required: false
         type: string
       backup-verified-at:
-        description: Required for upgrades; ISO timestamp of backup verification within the past 24 hours
+        description: Required for ordinary upgrades; ISO timestamp of verification within 24 hours
+        required: false
+        type: string
+      allow-unbacked-upgrade:
+        description: Explicit exceptional upgrade of existing production to v0.1.4 without a verified backup (not initial deployment)
+        required: true
+        default: false
+        type: boolean
+      unbacked-upgrade-acknowledgement:
+        description: If exception enabled, type exactly I ACCEPT PERMANENT DATA LOSS RISK FOR TOOLTRACK V0.1.4
         required: false
         type: string
 permissions:
@@ -68,6 +77,8 @@ jobs:
           INITIAL_DEPLOYMENT: ${{ inputs.initial-deployment }}
           BACKUP_REFERENCE: ${{ inputs.backup-reference }}
           BACKUP_VERIFIED_AT: ${{ inputs.backup-verified-at }}
+          ALLOW_UNBACKED_UPGRADE: ${{ inputs.allow-unbacked-upgrade }}
+          UNBACKED_UPGRADE_ACKNOWLEDGEMENT: ${{ inputs.unbacked-upgrade-acknowledgement }}
           DOKPLOY_URL: ${{ vars.DOKPLOY_URL }}
           DOKPLOY_PROJECT_ID: ${{ vars.DOKPLOY_PROJECT_ID }}
           DOKPLOY_ENVIRONMENT_ID: ${{ vars.DOKPLOY_ENVIRONMENT_ID }}
