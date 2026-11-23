@@ -4,29 +4,39 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client.js';
-import { PrismaService } from '../prisma/index.js';
 
 @Injectable()
 export class LinksService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async toolIds(collectionId: string) {
-    const links = await this.prisma.toolCollectionLink.findMany({
+  forCollection(collectionId: string, tx: Prisma.TransactionClient) {
+    return tx.toolCollectionLink.findMany({
       where: { collectionId },
-      select: { toolId: true },
+      select: { toolId: true, addedByUserId: true },
       orderBy: { createdAt: 'desc' },
     });
-    return links.map((link) => link.toolId);
+  }
+
+  async countForCollections(
+    collectionIds: string[],
+    tx: Prisma.TransactionClient,
+  ) {
+    const counts = await tx.toolCollectionLink.groupBy({
+      by: ['collectionId'],
+      where: { collectionId: { in: collectionIds } },
+      _count: { _all: true },
+    });
+    return new Map(counts.map((item) => [item.collectionId, item._count._all]));
   }
 
   async add(
     toolId: string,
     collectionId: string,
+    addedByUserId: string,
     tx: Prisma.TransactionClient,
   ) {
     try {
       return await tx.toolCollectionLink.create({
-        data: { toolId, collectionId },
+        data: { toolId, collectionId, addedByUserId },
+        select: { id: true, toolId: true, collectionId: true, createdAt: true },
       });
     } catch (error) {
       if (
