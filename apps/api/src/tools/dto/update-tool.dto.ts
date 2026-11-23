@@ -10,13 +10,14 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { TOOL_ACCESS_TYPES, type ToolAccessType } from './create-tool.dto.js';
+import { ToolTagsDto } from './tool-tags.dto.js';
 
 const trim = ({ value }: TransformFnParams): unknown =>
   typeof value === 'string' ? value.trim() : value;
 const supplied = (_object: unknown, value: unknown): boolean =>
   value !== undefined;
 
-export class UpdateToolDto {
+export class UpdateToolDto extends ToolTagsDto {
   @ValidateIf(supplied)
   @Transform(trim)
   @IsString()

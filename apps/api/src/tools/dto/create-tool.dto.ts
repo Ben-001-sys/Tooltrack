@@ -8,6 +8,7 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
+import { ToolTagsDto } from './tool-tags.dto.js';
 
 export const TOOL_ACCESS_TYPES = [
   'FREE',
@@ -18,7 +19,7 @@ export const TOOL_ACCESS_TYPES = [
 export type ToolAccessType =
   (typeof TOOL_ACCESS_TYPES)[number];
 
-export class CreateToolDto {
+export class CreateToolDto extends ToolTagsDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)

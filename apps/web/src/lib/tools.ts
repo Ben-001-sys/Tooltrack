@@ -14,6 +14,13 @@ export interface ToolCategory {
   slug: string;
 }
 
+export interface ToolTag {
+  id: string;
+  name: string;
+  slug: string;
+  kind: "DEPARTMENT" | "GENERAL";
+}
+
 export interface Tool {
   id: string;
   userId: string;
@@ -23,6 +30,7 @@ export interface Tool {
   accessType: AccessType;
   categoryId: string;
   category: ToolCategory;
+  tags: ToolTag[];
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +41,27 @@ export interface CreateToolInput {
   websiteUrl?: string | null;
   accessType: AccessType;
   categoryId: string;
+  tagIds?: string[];
+}
+
+export function filterTools(
+  tools: Tool[],
+  search: string,
+  access: AccessFilter,
+  categoryId: string,
+  departmentIds: string[],
+) {
+  const term = search.trim().toLowerCase();
+  const departments = new Set(departmentIds);
+  return tools.filter(
+    (tool) =>
+      (!term ||
+        tool.name.toLowerCase().includes(term) ||
+        (tool.description ?? "").toLowerCase().includes(term)) &&
+      (access === "ALL" || tool.accessType === access) &&
+      (categoryId === "ALL" || tool.categoryId === categoryId) &&
+      (departments.size === 0 || tool.tags.some(({ id }) => departments.has(id))),
+  );
 }
 
 export async function apiRequest<T>(

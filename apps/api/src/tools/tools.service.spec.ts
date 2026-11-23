@@ -47,6 +47,7 @@ describe('ToolsService', () => {
       id: 'tool-001',
       userId: 'user-001',
       name: 'VS Code',
+      toolTags: [],
     });
 
     const result = await service.create('user-001', {
@@ -117,17 +118,20 @@ describe('ToolsService', () => {
       userId: 'user-001',
       category: { name: 'Design' },
     };
-    prisma.tool.findFirst.mockResolvedValue(tool);
-    prisma.tool.update.mockResolvedValue(tool);
+    prisma.tool.findFirst.mockResolvedValue({ ...tool, toolTags: [] });
+    prisma.tool.update.mockResolvedValue({ ...tool, toolTags: [] });
     prisma.tool.deleteMany.mockResolvedValue({ count: 1 });
-    expect(await service.findOne('user-001', tool.id)).toEqual(tool);
+    expect(await service.findOne('user-001', tool.id)).toEqual({
+      ...tool,
+      tags: [],
+    });
     expect(
       await service.update('user-001', tool.id, {
         name: ' Updated ',
         description: null,
         websiteUrl: null,
       }),
-    ).toEqual(tool);
+    ).toEqual({ ...tool, tags: [] });
     await service.remove('user-001', tool.id);
     for (const query of [
       prisma.tool.findFirst,
@@ -145,7 +149,9 @@ describe('ToolsService', () => {
           description: null,
           websiteUrl: null,
         }),
-        include: { category: { select: { id: true, name: true, slug: true } } },
+        include: expect.objectContaining({
+          category: { select: { id: true, name: true, slug: true } },
+        }),
       }),
     );
   });
@@ -177,7 +183,7 @@ describe('ToolsService', () => {
   });
 
   it('validates category changes and propagates unexpected database failures', async () => {
-    prisma.tool.findFirst.mockResolvedValue({ id: 'tool-001' });
+    prisma.tool.findFirst.mockResolvedValue({ id: 'tool-001', toolTags: [] });
     prisma.category.findUnique.mockResolvedValue(null);
     await expect(
       service.update('user-001', 'tool-001', {
