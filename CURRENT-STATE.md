@@ -1,5 +1,19 @@
 # ToolTrack implementation state
 
+## Collection-owned tools — 2026-11-24 (Unreleased)
+
+This section describes repository implementation and supersedes older ownership descriptions below; historical release/deployment claims remain historical.
+
+- Base: reviewed staging `3387126` on the v0.1.4 release baseline. Feature branch: `feature/collection-owned-tools`. No production release, database migration or deployment was authorized or performed here.
+- Tools may have exactly one scalar business owner: user or collection. Tools still owns the record and its category/tag relationships; no cross-module foreign keys, creator-account dependency, new business module or redundant owned-tool links were added.
+- Create inside a collection uses the existing two-step Add Tool form. Personal linking stays separate and retains restricted summaries. Collection counts include owned and linked tools. Authorized shared tools support Details/Edit/Delete.
+- Private collections remain owner-only; signed-in public collaborators can manage collection-owned tools. Only owners change visibility. Collection locks precede Tool writes/reads; visibility changes and deletion serialize with those operations. Collection deletion calls Tools and Links services inside one transaction and preserves personal tools and shared metadata.
+- New migration: `20261124120000_add_collection_owned_tools`; existing migrations remain unchanged. Apply using the standard migration/seed gate with normal backup and approval requirements. No extension of the v0.1.4 no-backup exception. Downgrade is unsafe after collection-owned writes without a separately reviewed preservation plan; prefer a forward fix.
+- Architecture validation now scans the actual `tools`, `collections`, `links` and `auth` folders and requires public cross-module imports. A regression test exercises allowed/forbidden imports, cross-module relations and missing folders.
+- Review: draft PR [#53](https://github.com/Ben-001-sys/Tooltrack/pull/53) targets staging. Feature code commit `6d4e766`; peer review and final CI acceptance are still required before merging.
+- Verification: frozen root installation, Prisma generation/validation, lint, typecheck, native API/Web build, two frontend filter tests, 19 API unit tests, 11 disposable PostgreSQL integration tests, 27 architecture/deployment tests, migration status and schema-drift checks passed. Integration tests apply all migrations fresh and migrate a populated previous-schema fixture; they verify XOR ownership, privacy, account independence, rollback and deterministic locking. Both existing Dockerfiles build successfully. The unchanged container verifier passed fresh migration/seed, repeat seeding, auth lifecycle, restart/persistence and disposable backup/restore; the failure-gate verifier confirmed migration or seed failure prevents API/Web startup. Manual browser testing is blocked by this chat runtime pointing at the removed H: path. Existing card/navigation edits are preserved separately from the feature.
+
+
 ## Live staging acceptance and release preparation — 2026-11-16
 
 This section supersedes the historical `2026-11-14` setup snapshot retained below; the earlier no-deployment statement describes that earlier date, not the current deployment state.
