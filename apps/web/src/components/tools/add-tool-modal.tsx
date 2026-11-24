@@ -37,6 +37,7 @@ interface AddToolModalProps {
   departmentCatalog: DepartmentCatalog;
   onRetryDepartments: () => void;
   tool?: Tool;
+  collectionId?: string;
   onClose: () => void;
   onSaved: (tool: Tool) => void;
 }
@@ -68,6 +69,7 @@ export default function AddToolModal({
   departmentCatalog,
   onRetryDepartments,
   tool,
+  collectionId,
   onClose,
   onSaved,
 }: AddToolModalProps) {
@@ -169,7 +171,9 @@ export default function AddToolModal({
 
     try {
       const saved = await apiRequest<Tool>(
-        tool ? `/api/v1/tools/${tool.id}` : "/api/v1/tools",
+        collectionId
+          ? `/api/v1/collections/${collectionId}/owned-tools${tool ? `/${tool.id}` : ""}`
+          : tool ? `/api/v1/tools/${tool.id}` : "/api/v1/tools",
         {
           method: tool ? "PATCH" : "POST",
           headers: {
@@ -222,7 +226,7 @@ export default function AddToolModal({
           <DialogDescription>
             {step === 1
               ? "Choose how you access this software."
-              : "Enter the information about your tool."}
+              : collectionId ? "This tool belongs to the collection and follows its permissions." : "Enter the information about your tool."}
           </DialogDescription>
         </DialogHeader>
 

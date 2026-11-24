@@ -17,6 +17,8 @@ import { apiRequest, type AccessType, type Tool, type ToolCategory } from "@/lib
 
 interface ToolCardProps {
   tool: Tool;
+  collectionId?: string;
+  disabled?: boolean;
   categories: ToolCategory[];
   departmentCatalog: DepartmentCatalog;
   onRetryDepartments: () => void;
@@ -56,6 +58,8 @@ function getSafeWebsiteUrl(value: string | null): string | null {
 
 export default function ToolCard({
   tool,
+  collectionId,
+  disabled,
   categories,
   departmentCatalog,
   onRetryDepartments,
@@ -69,10 +73,12 @@ export default function ToolCard({
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const apiPath = collectionId ? `/api/v1/collections/${collectionId}/owned-tools` : "/api/v1/tools";
+
   useEffect(() => {
     if (!detailsOpen) return;
     const controller = new AbortController();
-    void apiRequest<Tool>(`/api/v1/tools/${tool.id}`, {
+    void apiRequest<Tool>(`${apiPath}/${tool.id}`, {
       signal: controller.signal,
     })
       .then((value) => {
@@ -87,14 +93,14 @@ export default function ToolCard({
           );
       });
     return () => controller.abort();
-  }, [detailsOpen, tool.id]);
+  }, [detailsOpen, tool.id, apiPath]);
 
   async function removeTool() {
     if (deleting || !details) return;
     setDeleting(true);
     setError(null);
     try {
-      await apiRequest<void>(`/api/v1/tools/${details.id}`, {
+      await apiRequest<void>(`${apiPath}/${details.id}`, {
         method: "DELETE",
       });
       setDeleteOpen(false);
@@ -175,6 +181,7 @@ export default function ToolCard({
           )}
           <Button
             variant="outline"
+            disabled={disabled}
             onClick={() => {
               setDetails(null);
               setError(null);
@@ -262,6 +269,7 @@ export default function ToolCard({
       {editing && details && (
         <AddToolModal
           categories={categories}
+          collectionId={collectionId}
           departmentCatalog={departmentCatalog}
           onRetryDepartments={onRetryDepartments}
           tool={details}
@@ -283,7 +291,7 @@ export default function ToolCard({
           <DialogHeader>
             <DialogTitle>Delete tool?</DialogTitle>
             <DialogDescription>
-              Delete “{details?.name}”? This cannot be undone.
+              Delete “{details?.name}”? {collectionId ? "This permanently deletes the collection-owned tool." : "This cannot be undone."}
             </DialogDescription>
           </DialogHeader>
           {error && (

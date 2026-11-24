@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../prisma/index.js';
 
 import { ToolsService } from './tools.service.js';
-import type { LinksService } from '../links/links.service.js';
+import type { LinksService } from '../links/index.js';
 
 describe('ToolsService', () => {
   const prisma = {
@@ -70,6 +70,25 @@ describe('ToolsService', () => {
     );
 
     expect(result.userId).toBe('user-001');
+  });
+
+  it('rejects missing ownership context before creating personal or collection tools', async () => {
+    const fields = {
+      name: 'Tool',
+      accessType: 'FREE' as const,
+      categoryId: crypto.randomUUID(),
+    };
+    await expect(service.create('', fields)).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(
+      service.createForCollection(
+        '',
+        fields,
+        prisma as unknown as PrismaService,
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.tool.create).not.toHaveBeenCalled();
   });
 
   it('rejects a missing category', async () => {

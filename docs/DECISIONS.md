@@ -1,5 +1,14 @@
 # Implementation decisions
 
+## Collection-owned tools (Unreleased)
+
+Business ownership is separate from module ownership. The existing Tool table has a nullable user ID and nullable collection UUID, with a database XOR CHECK and an index on collection ID. Personal creation supplies only a user owner; the collection coordinator supplies only an authorized collection owner. No creator ID, cross-module FK or additional link is required for owned tools.
+
+Tools exposes explicit collection-scoped read/write/count/cleanup methods and reuses its validation, tag replacement and serialization. Collections depends on Tools' public entry point for aggregate counts and atomic deletion; Tools depends only on the Links storage module, so no circular dependency is introduced. The existing composition-root Links controller checks collection access and holds its shared row lock before invoking collection-scoped Tool operations. Updates/deletes filter both collection and tool ID. Parent deletion/visibility updates hold conflicting locks, preventing orphan creation or edits authorized against stale public visibility.
+
+The old architecture checker silently skipped a nonexistent `src/modules` directory. It now checks actual business module directories, resolves relative imports, and requires other modules' `index.js`/`public.js` entry points; missing modules fail. Personal links retain their privacy projection; shared owned-tool fields are available to authorized collection members. Owned website responses strip URL credentials, query strings and fragments. A normal post-v0.1.4 backup-gated release is required; old code/schema rollback cannot safely represent or clean up collection-owned records.
+
+
 - Keep Option A: separate Web/API images, one ordinary Compose resource per environment, private PostgreSQL. No Swarm or service extraction.
 - Pin pnpm 11.5.3, matching the installed toolchain and web declaration. Root lockfile frozen install works. Preserve the edited nested web lockfile; reconcile/remove it only in a separately reviewed cleanup after its owner resolves existing changes.
 - Preserve Next.js Cache Components/Tailwind configuration. Linux standalone build succeeds; the Windows Turbopack CSS worker failure is environmental and remains documented. No speculative Tailwind dependency replacement.
