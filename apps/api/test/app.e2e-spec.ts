@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { promisify } from 'node:util';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '../src/generated/prisma/client.js';
+import { PrismaClient, type Prisma } from '../src/generated/prisma/client.js';
 
 const run = promisify(execFile);
 const seedDatabase = () =>
@@ -829,6 +829,7 @@ describe('compiled API against disposable PostgreSQL', () => {
             saved.map(({ id }, index) => ({
               id,
               name: ['Terminal', 'VS Code', 'Docker'][index],
+              ownership: 'PERSONAL_LINK',
               websiteUrl: 'https://example.com/tool',
               accessType: 'FREE',
               category: { name: category.name },
@@ -911,6 +912,7 @@ describe('compiled API against disposable PostgreSQL', () => {
           {
             id: saved[2].id,
             name: 'Docker',
+            ownership: 'PERSONAL_LINK',
             websiteUrl: 'https://example.com/tool',
             accessType: 'FREE',
             category: { name: category.name },
@@ -1290,4 +1292,602 @@ describe('compiled API against disposable PostgreSQL', () => {
       await prisma.$disconnect();
     }
   }, 30_000);
+  it('preserves a populated previous schema when adding exclusive Tool business ownership', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const migration = async (name: string) =>
+      readFile(
+        new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url),
+        'utf8',
+      );
+    const previous = await Promise.all(
+      [
+        '20261113132308_init_tools',
+        '20261113174823_add_better_auth',
+        '20261116133000_add_collections_and_tool_links',
+        '20261123120000_add_collection_visibility',
+        '20261123130000_add_tool_tags',
+      ].map(migration),
+    );
+    const after = await migration('20261124120000_add_collection_owned_tools');
+    const rollback = new Error('Roll back ownership migration fixture');
+    try {
+      await expect(
+        prisma.$transaction(
+          async (tx) => {
+            const schema = `ownership_${crypto.randomUUID().replaceAll('-', '')}`;
+            await tx.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
+            await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${schema}"`);
+            async function apply(sql: string) {
+              for (const statement of sql
+                .split(';')
+                .map((value) => value.trim()))
+                if (statement) await tx.$executeRawUnsafe(statement);
+            }
+            for (const sql of previous) await apply(sql);
+            const [categoryId, tagId, toolId, collectionId, linkId] =
+              Array.from({ length: 5 }, () => crypto.randomUUID());
+            await tx.$executeRaw`INSERT INTO categories (id,name,slug,"updatedAt") VALUES (${categoryId}::uuid,'Legacy category','legacy-category',now())`;
+            await tx.$executeRaw`INSERT INTO "user" (id,name,email,"updatedAt") VALUES ('legacy-owner','Legacy owner','legacy@example.test',now())`;
+            await tx.$executeRaw`INSERT INTO "account" (id,"accountId","providerId","userId","updatedAt") VALUES ('legacy-account','legacy-owner','credential','legacy-owner',now())`;
+            await tx.$executeRaw`INSERT INTO "session" (id,"expiresAt",token,"updatedAt","userId") VALUES ('legacy-session',now()+interval '1 day','legacy-test-token',now(),'legacy-owner')`;
+            await tx.$executeRaw`INSERT INTO tools (id,"userId",name,"accessType","categoryId","updatedAt") VALUES (${toolId}::uuid,'legacy-owner','Legacy tool','FREE',${categoryId}::uuid,now())`;
+            await tx.$executeRaw`INSERT INTO tags (id,name,slug,kind,"updatedAt") VALUES (${tagId}::uuid,'Legacy department','legacy-department','DEPARTMENT',now())`;
+            await tx.$executeRaw`INSERT INTO tool_tags ("toolId","tagId") VALUES (${toolId}::uuid,${tagId}::uuid)`;
+            await tx.$executeRaw`INSERT INTO collections (id,"userId",name,"updatedAt") VALUES (${collectionId}::uuid,'legacy-owner','Legacy collection',now())`;
+            await tx.$executeRaw`INSERT INTO tool_collection_links (id,"toolId","collectionId") VALUES (${linkId}::uuid,${toolId}::uuid,${collectionId}::uuid)`;
+            await apply(after);
+            expect(
+              await tx.$queryRaw`
+          SELECT t."userId", t."collectionId", c.name AS category, d.name AS department, l.id AS link, cl.name AS collection
+          FROM tools t JOIN categories c ON c.id=t."categoryId"
+          JOIN tool_tags tt ON tt."toolId"=t.id JOIN tags d ON d.id=tt."tagId"
+          JOIN tool_collection_links l ON l."toolId"=t.id JOIN collections cl ON cl.id=l."collectionId"
+          WHERE t.id=${toolId}::uuid
+        `,
+            ).toEqual([
+              {
+                userId: 'legacy-owner',
+                collectionId: null,
+                category: 'Legacy category',
+                department: 'Legacy department',
+                link: linkId,
+                collection: 'Legacy collection',
+              },
+            ]);
+            expect(
+              await tx.$queryRaw`SELECT (SELECT count(*) FROM "user") AS users, (SELECT count(*) FROM "account") AS accounts, (SELECT count(*) FROM "session") AS sessions`,
+            ).toEqual([{ users: 1n, accounts: 1n, sessions: 1n }]);
+            await tx.$executeRaw`INSERT INTO tools (id,"collectionId",name,"accessType","categoryId","updatedAt") VALUES (${crypto.randomUUID()}::uuid,${collectionId}::uuid,'Owned tool','FREE',${categoryId}::uuid,now())`;
+            expect(
+              await tx.$queryRaw`SELECT "userId", "collectionId" FROM tools WHERE name='Owned tool'`,
+            ).toEqual([{ userId: null, collectionId }]);
+            throw rollback;
+          },
+          { timeout: 15_000 },
+        ),
+      ).rejects.toBe(rollback);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  it('authorizes collection-owned CRUD, keeps personal links private, and atomically cleans owned data', async () => {
+    const prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: process.env.TEST_DATABASE_URL!,
+      }),
+    });
+    const category = await prisma.category.create({
+      data: { name: `Owned ${crypto.randomUUID()}`, slug: crypto.randomUUID() },
+    });
+    const tag = await prisma.tag.create({
+      data: {
+        name: `Owned department ${crypto.randomUUID()}`,
+        slug: `owned-${crypto.randomUUID()}`,
+        kind: 'DEPARTMENT',
+      },
+    });
+    const collectionIds: string[] = [];
+    const emails: string[] = [];
+    const fields = {
+      name: 'Canva',
+      categoryId: category.id,
+      accessType: 'FREE',
+      description: 'Shared collection notes',
+      websiteUrl:
+        'https://person:secret@example.com/tool?token=private#private',
+      tagIds: [tag.id],
+    };
+    const guard = `owned_cleanup_${crypto.randomUUID().replaceAll('-', '')}`;
+    async function register(index: number) {
+      const email = `owned-${crypto.randomUUID()}@example.com`;
+      emails.push(email);
+      const response = await post(
+        'sign-up/email',
+        { email, password, name: `Owner fixture ${index}` },
+        `192.0.2.${60 + index}`,
+      );
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as { user: { id: string } };
+      return { cookie, id: data.user.id };
+    }
+    async function request(
+      actor: string,
+      method: string,
+      path: string,
+      body?: object,
+    ) {
+      return fetch(`${base}/api/v1${path}`, {
+        method,
+        headers: {
+          cookie: actor,
+          origin: base,
+          'content-type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    }
+    async function collection(
+      actor: string,
+      visibility: 'PUBLIC' | 'PRIVATE' = 'PRIVATE',
+    ) {
+      const response = await request(actor, 'POST', '/collections', {
+        name: 'Owned tools fixture',
+        visibility,
+      });
+      expect(response.status).toBe(201);
+      const item = (await response.json()) as { id: string };
+      collectionIds.push(item.id);
+      return item.id;
+    }
+    async function createOwned(actor: string, id: string) {
+      const response = await request(
+        actor,
+        'POST',
+        `/collections/${id}/owned-tools`,
+        fields,
+      );
+      expect(response.status).toBe(201);
+      const tool = (await response.json()) as { id: string };
+      expect(tool).toMatchObject({
+        userId: null,
+        collectionId: id,
+        ownership: 'COLLECTION',
+        category: { id: category.id },
+        tags: [expect.objectContaining({ id: tag.id })],
+        websiteUrl: 'https://example.com/tool',
+      });
+      return tool.id;
+    }
+    async function waitForBlocked(
+      tx: Prisma.TransactionClient,
+    ) {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const [result] = await tx.$queryRaw<
+          { blocked: boolean }[]
+        >`SELECT EXISTS (SELECT FROM pg_locks WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked`;
+        if (result.blocked) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(
+        'Expected the collection request to wait on its row lock',
+      );
+    }
+    try {
+      const owner = await register(0);
+      const contributor = await register(1);
+      const member = await register(2);
+      const privateId = await collection(owner.cookie);
+      const privateToolId = await createOwned(owner.cookie, privateId);
+      const privatePath = `/collections/${privateId}/owned-tools/${privateToolId}`;
+      expect((await request(owner.cookie, 'GET', privatePath)).status).toBe(
+        200,
+      );
+      expect(
+        (
+          await request(owner.cookie, 'PATCH', privatePath, {
+            name: 'Updated private tool',
+            tagIds: [],
+          })
+        ).status,
+      ).toBe(200);
+      for (const [method, path, body] of [
+        ['GET', privatePath, undefined],
+        ['PATCH', privatePath, { name: 'Stolen' }],
+        ['DELETE', privatePath, undefined],
+        ['POST', `/collections/${privateId}/owned-tools`, fields],
+        ['GET', `/collections/${privateId}/tools`, undefined],
+      ] as const) {
+        expect(
+          (await request(contributor.cookie, method, path, body)).status,
+        ).toBe(404);
+        expect((await request('', method, path, body)).status).toBe(401);
+      }
+      expect((await request(owner.cookie, 'DELETE', privatePath)).status).toBe(
+        204,
+      );
+      expect((await request(owner.cookie, 'GET', privatePath)).status).toBe(
+        404,
+      );
+      const publicId = await collection(owner.cookie, 'PUBLIC');
+      const secondId = await collection(owner.cookie, 'PUBLIC');
+      const path = `/collections/${publicId}`;
+      const ownedPath = `${path}/owned-tools`;
+      const toolId = await createOwned(contributor.cookie, publicId);
+      const toolPath = `${ownedPath}/${toolId}`;
+      expect(await prisma.toolCollectionLink.count({ where: { toolId } })).toBe(
+        0,
+      );
+      for (const actor of [owner.cookie, contributor.cookie, member.cookie]) {
+        expect(
+          await (await request(actor, 'GET', '/tools')).json(),
+        ).not.toContainEqual(expect.objectContaining({ id: toolId }));
+        for (const method of ['GET', 'PATCH', 'DELETE']) {
+          expect(
+            (
+              await request(
+                actor,
+                method,
+                `/tools/${toolId}`,
+                method === 'PATCH' ? { name: 'Stolen' } : undefined,
+              )
+            ).status,
+          ).toBe(404);
+        }
+      }
+      for (const method of ['GET', 'PATCH', 'DELETE']) {
+        expect(
+          (
+            await request(
+              member.cookie,
+              method,
+              `/collections/${secondId}/owned-tools/${toolId}`,
+              method === 'PATCH' ? { name: 'Wrong collection' } : undefined,
+            )
+          ).status,
+        ).toBe(404);
+        expect(
+          (
+            await request(
+              '',
+              method,
+              toolPath,
+              method === 'PATCH' ? { name: 'No auth' } : undefined,
+            )
+          ).status,
+        ).toBe(401);
+      }
+      expect((await request('', 'POST', ownedPath, fields)).status).toBe(401);
+      expect((await request('', 'GET', `${path}/tools`)).status).toBe(401);
+      expect(
+        (await request('', 'GET', `/public-collections/${publicId}/tools`))
+          .status,
+      ).toBe(401);
+      expect(
+        (
+          await request(
+            owner.cookie,
+            'POST',
+            `/collections/${secondId}/tools`,
+            { toolId },
+          )
+        ).status,
+      ).toBe(404);
+      for (const body of [
+        { ...fields, userId: owner.id },
+        { ...fields, collectionId: secondId },
+        { ...fields, tagIds: [crypto.randomUUID()] },
+        { ...fields, categoryId: crypto.randomUUID() },
+        { ...fields, websiteUrl: 'javascript:alert(1)' },
+      ]) {
+        expect(
+          (await request(member.cookie, 'POST', ownedPath, body)).status,
+        ).toBe(400);
+      }
+      for (const body of [
+        { userId: member.id },
+        { collectionId: secondId },
+        { name: ' ' },
+        { name: 'Must roll back', tagIds: [crypto.randomUUID()] },
+      ]) {
+        expect(
+          (await request(member.cookie, 'PATCH', toolPath, body)).status,
+        ).toBe(400);
+      }
+      expect(
+        await prisma.tool.count({ where: { collectionId: publicId } }),
+      ).toBe(1);
+      expect(
+        await (await request(member.cookie, 'GET', toolPath)).json(),
+      ).toMatchObject({
+        name: 'Canva',
+        tags: [expect.objectContaining({ id: tag.id })],
+      });
+      expect(
+        (
+          await request(
+            member.cookie,
+            'POST',
+            '/collections/invalid/owned-tools',
+            fields,
+          )
+        ).status,
+      ).toBe(400);
+      for (const method of ['GET', 'PATCH', 'DELETE'])
+        expect(
+          (
+            await request(
+              member.cookie,
+              method,
+              `${ownedPath}/invalid`,
+              method === 'PATCH' ? { name: 'Invalid' } : undefined,
+            )
+          ).status,
+        ).toBe(400);
+      for (const data of [
+        { userId: null, collectionId: null },
+        { userId: owner.id, collectionId: publicId },
+      ]) {
+        await expect(
+          prisma.tool.create({
+            data: {
+              ...data,
+              name: 'Invalid owner',
+              categoryId: category.id,
+              accessType: 'FREE',
+            },
+          }),
+        ).rejects.toThrow(/tools_exactly_one_owner|check constraint/i);
+      }
+      const edited = await request(member.cookie, 'PATCH', toolPath, {
+        name: 'Shared edit',
+        description: null,
+        accessType: 'LICENSED',
+        tagIds: [],
+      });
+      expect(edited.status).toBe(200);
+      expect(await edited.json()).toMatchObject({
+        name: 'Shared edit',
+        description: null,
+        tags: [],
+        userId: null,
+        collectionId: publicId,
+      });
+      const deletable = await createOwned(contributor.cookie, publicId);
+      expect(
+        (await request(member.cookie, 'DELETE', `${ownedPath}/${deletable}`))
+          .status,
+      ).toBe(204);
+      expect(await prisma.toolTag.count({ where: { toolId: deletable } })).toBe(
+        0,
+      );
+      expect(
+        (await request(member.cookie, 'PATCH', path, { visibility: 'PRIVATE' }))
+          .status,
+      ).toBe(403);
+      expect(
+        (await request(owner.cookie, 'PATCH', path, { visibility: 'PRIVATE' }))
+          .status,
+      ).toBe(200);
+      expect((await request(owner.cookie, 'GET', toolPath)).status).toBe(200);
+      expect(
+        await prisma.tool.findUnique({ where: { id: toolId } }),
+      ).toMatchObject({ collectionId: publicId, userId: null });
+      for (const [method, target, body] of [
+        ['GET', toolPath, undefined],
+        ['PATCH', toolPath, { name: 'Revoked' }],
+        ['DELETE', toolPath, undefined],
+        ['POST', ownedPath, fields],
+      ] as const)
+        expect(
+          (await request(member.cookie, method, target, body)).status,
+        ).toBe(404);
+      expect(
+        (
+          await request(
+            member.cookie,
+            'GET',
+            `/public-collections/${publicId}/tools`,
+          )
+        ).status,
+      ).toBe(404);
+      expect(
+        (await request(owner.cookie, 'PATCH', path, { visibility: 'PUBLIC' }))
+          .status,
+      ).toBe(200);
+      const personalResponse = await request(
+        contributor.cookie,
+        'POST',
+        '/tools',
+        { ...fields, description: 'Private personal notes' },
+      );
+      expect(personalResponse.status).toBe(201);
+      const personal = (await personalResponse.json()) as { id: string };
+      expect(
+        await prisma.tool.findUnique({ where: { id: personal.id } }),
+      ).toMatchObject({ userId: contributor.id, collectionId: null });
+      expect(
+        (
+          await request(contributor.cookie, 'POST', `${path}/tools`, {
+            toolId: personal.id,
+          })
+        ).status,
+      ).toBe(201);
+      for (const target of [
+        `${path}/tools`,
+        `/public-collections/${publicId}/tools`,
+      ]) {
+        const rows = (await (
+          await request(member.cookie, 'GET', target)
+        ).json()) as { id: string; ownership: string }[];
+        expect(rows.find((row) => row.id === toolId)).toMatchObject({
+          ownership: 'COLLECTION',
+          name: 'Shared edit',
+          tags: [],
+        });
+        const summary = rows.find((row) => row.id === personal.id);
+        expect(summary).toEqual({
+          id: personal.id,
+          ownership: 'PERSONAL_LINK',
+          name: 'Canva',
+          websiteUrl: 'https://example.com/tool',
+          accessType: 'FREE',
+          category: { name: category.name },
+        });
+      }
+      expect(
+        await (
+          await request(member.cookie, 'GET', '/public-collections')
+        ).json(),
+      ).toContainEqual(expect.objectContaining({ id: publicId, toolCount: 2 }));
+      expect(
+        (await request(member.cookie, 'DELETE', `${path}/tools/${personal.id}`))
+          .status,
+      ).toBe(204);
+      expect(
+        (await request(contributor.cookie, 'GET', `/tools/${personal.id}`))
+          .status,
+      ).toBe(200);
+      expect(
+        (await request(contributor.cookie, 'DELETE', `/tools/${personal.id}`))
+          .status,
+      ).toBe(204);
+      await prisma.user.delete({ where: { id: contributor.id } });
+      expect((await request(owner.cookie, 'GET', toolPath)).status).toBe(200);
+      // Permission checks must re-read visibility after waiting for the collection lock.
+      for (const [method, target, body] of [
+        ['POST', ownedPath, fields],
+        ['PATCH', toolPath, { name: 'Revoked' }],
+        ['DELETE', toolPath, undefined],
+        ['GET', toolPath, undefined],
+      ] as const) {
+        await request(owner.cookie, 'PATCH', path, { visibility: 'PUBLIC' });
+        let pending: Promise<Response> | undefined;
+        await prisma.$transaction(async (tx) => {
+          await tx.collection.update({
+            where: { id: publicId },
+            data: { visibility: 'PRIVATE' },
+          });
+          pending = request(member.cookie, method, target, body);
+          await waitForBlocked(tx);
+        });
+        expect((await pending)?.status).toBe(404);
+      }
+      await request(owner.cookie, 'PATCH', path, { visibility: 'PUBLIC' });
+      const personalOwner = await request(
+        owner.cookie,
+        'POST',
+        '/tools',
+        fields,
+      );
+      const original = (await personalOwner.json()) as { id: string };
+      expect(personalOwner.status).toBe(201);
+      expect(
+        (
+          await request(owner.cookie, 'POST', `${path}/tools`, {
+            toolId: original.id,
+          })
+        ).status,
+      ).toBe(201);
+      const taggedOwned = await createOwned(owner.cookie, publicId);
+      // Fail the final cleanup write and prove earlier Tool/ToolTag deletes and parent deletion roll back.
+      await prisma.$executeRawUnsafe(
+        `CREATE FUNCTION "${guard}"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD."collectionId"='${publicId}'::uuid THEN RAISE EXCEPTION 'test cleanup rollback'; END IF; RETURN OLD; END $$`,
+      );
+      await prisma.$executeRawUnsafe(
+        `CREATE TRIGGER "${guard}" BEFORE DELETE ON tool_collection_links FOR EACH ROW EXECUTE FUNCTION "${guard}"()`,
+      );
+      expect((await request(owner.cookie, 'DELETE', path)).status).toBe(500);
+      expect(await prisma.collection.count({ where: { id: publicId } })).toBe(
+        1,
+      );
+      expect(
+        await prisma.tool.count({ where: { collectionId: publicId } }),
+      ).toBe(2);
+      expect(
+        await prisma.toolTag.count({ where: { toolId: taggedOwned } }),
+      ).toBe(1);
+      expect(
+        await prisma.toolCollectionLink.count({
+          where: { collectionId: publicId },
+        }),
+      ).toBe(1);
+      await prisma.$executeRawUnsafe(
+        `DROP TRIGGER "${guard}" ON tool_collection_links`,
+      );
+      await prisma.$executeRawUnsafe(`DROP FUNCTION "${guard}"()`);
+      expect((await request(member.cookie, 'DELETE', path)).status).toBe(204);
+      expect(
+        await prisma.tool.count({ where: { collectionId: publicId } }),
+      ).toBe(0);
+      expect(
+        await prisma.toolTag.count({ where: { toolId: taggedOwned } }),
+      ).toBe(0);
+      expect(
+        await prisma.toolCollectionLink.count({
+          where: { collectionId: publicId },
+        }),
+      ).toBe(0);
+      expect(
+        (await request(owner.cookie, 'GET', `/tools/${original.id}`)).status,
+      ).toBe(200);
+      expect(await prisma.tag.count({ where: { id: tag.id } })).toBe(1);
+      const raceId = await collection(owner.cookie, 'PUBLIC');
+      let pending: Promise<Response> | undefined;
+      await prisma.$transaction(async (tx) => {
+        await tx.collection.delete({ where: { id: raceId } });
+        pending = request(
+          member.cookie,
+          'POST',
+          `/collections/${raceId}/owned-tools`,
+          fields,
+        );
+        await waitForBlocked(tx);
+      });
+      expect((await pending)?.status).toBe(404);
+      expect(await prisma.tool.count({ where: { collectionId: raceId } })).toBe(
+        0,
+      );
+      const queuedId = await collection(owner.cookie, 'PUBLIC');
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM collections WHERE id=${queuedId}::uuid FOR SHARE`;
+        await tx.tool.create({
+          data: {
+            collectionId: queuedId,
+            userId: null,
+            name: 'Committed while delete waits',
+            categoryId: category.id,
+            accessType: 'FREE',
+            toolTags: { create: { tagId: tag.id } },
+          },
+        });
+        pending = request(member.cookie, 'DELETE', `/collections/${queuedId}`);
+        await waitForBlocked(tx);
+      });
+      expect((await pending)?.status).toBe(204);
+      expect(
+        await prisma.tool.count({ where: { collectionId: queuedId } }),
+      ).toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe(
+        `DROP TRIGGER IF EXISTS "${guard}" ON tool_collection_links`,
+      );
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${guard}"()`);
+      await prisma.toolCollectionLink.deleteMany({
+        where: { collectionId: { in: collectionIds } },
+      });
+      await prisma.tool.deleteMany({ where: { categoryId: category.id } });
+      await prisma.collection.deleteMany({
+        where: { id: { in: collectionIds } },
+      });
+      await prisma.user.deleteMany({ where: { email: { in: emails } } });
+      await prisma.tag.delete({ where: { id: tag.id } });
+      await prisma.category.delete({ where: { id: category.id } });
+      await prisma.$disconnect();
+    }
+  }, 60_000);
 });

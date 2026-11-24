@@ -23,7 +23,8 @@ export interface ToolTag {
 
 export interface Tool {
   id: string;
-  userId: string;
+  userId: string | null;
+  collectionId: string | null;
   name: string;
   description: string | null;
   websiteUrl: string | null;
@@ -34,6 +35,14 @@ export interface Tool {
   createdAt: string;
   updatedAt: string;
 }
+
+// Linked personal records intentionally expose only the existing collection field set.
+export type CollectionTool = (Tool & { ownership: "COLLECTION" }) | (
+  Pick<Tool, "id" | "name" | "websiteUrl" | "accessType"> & {
+    category: Pick<ToolCategory, "name">;
+    ownership: "PERSONAL_LINK";
+  }
+);
 
 export interface CreateToolInput {
   name: string;

@@ -5,7 +5,16 @@ import { Globe, Lock } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
-import { apiRequest, type Tool } from "@/lib/tools";
+import AddToolModal from "@/components/tools/add-tool-modal";
+import ToolCard from "@/components/tools/tool-card";
+import type { DepartmentCatalog } from "@/components/tools/department-picker";
+import {
+  apiRequest,
+  type CollectionTool,
+  type Tool,
+  type ToolCategory,
+  type ToolTag,
+} from "@/lib/tools";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,9 +49,6 @@ const visibilityDescriptions = {
     "Every signed-in ToolTrack user can view, edit, add or remove tools, and delete this collection.",
 } as const;
 type Visibility = keyof typeof visibilityLabels;
-type LinkedTool = Pick<Tool, "id" | "name" | "websiteUrl" | "accessType"> & {
-  category: Pick<Tool["category"], "name">;
-};
 
 interface Collection {
   id: string;
@@ -98,9 +104,15 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
     : "/api/v1/collections";
   const [collections, setCollections] = useState<Collection[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
+  const [categories, setCategories] = useState<ToolCategory[]>([]);
+  const [departmentCatalog, setDepartmentCatalog] = useState<DepartmentCatalog>(
+    { status: "loading" },
+  );
+  const [departmentReload, setDepartmentReload] = useState(0);
+  const [creatingTool, setCreatingTool] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [linked, setLinked] = useState<LinkedTool[] | null>(null);
+  const [linked, setLinked] = useState<CollectionTool[] | null>(null);
   const [toolId, setToolId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"create" | "edit" | "delete" | null>(
     null,
@@ -126,11 +138,15 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
         signal: controller.signal,
       }),
       apiRequest<Tool[]>("/api/v1/tools", { signal: controller.signal }),
+      apiRequest<ToolCategory[]>("/api/v1/categories", {
+        signal: controller.signal,
+      }),
     ])
-      .then(([items, savedTools]) => {
+      .then(([items, savedTools, toolCategories]) => {
         if (!controller.signal.aborted) {
           setCollections(items);
           setTools(savedTools);
+          setCategories(toolCategories);
         }
       })
       .catch((caught: unknown) => {
@@ -154,7 +170,7 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
       apiRequest<Collection>(listPath + "/" + selectedId, {
         signal: controller.signal,
       }),
-      apiRequest<LinkedTool[]>(listPath + "/" + selectedId + "/tools", {
+      apiRequest<CollectionTool[]>(listPath + "/" + selectedId + "/tools", {
         signal: controller.signal,
       }),
     ])
@@ -165,7 +181,7 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
               item.id === collection.id
                 ? {
                     ...collection,
-                    toolCount: explore ? items.length : undefined,
+                    toolCount: items.length,
                   }
                 : item,
             ),
@@ -187,6 +203,43 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
       });
     return () => controller.abort();
   }, [listPath, explore, selectedId, reload]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void apiRequest<ToolTag[]>("/api/v1/tags", { signal: controller.signal })
+      .then((tags) => {
+        if (!controller.signal.aborted)
+          setDepartmentCatalog({
+            status: "ready",
+            departments: tags.filter((tag) => tag.kind === "DEPARTMENT"),
+          });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setDepartmentCatalog({ status: "error" });
+      });
+    return () => controller.abort();
+  }, [departmentReload]);
+
+  function refreshDepartments() {
+    setDepartmentCatalog({ status: "loading" });
+    setDepartmentReload((current) => current + 1);
+  }
+
+  function savedOwned(tool: Tool) {
+    const item: CollectionTool = { ...tool, ownership: "COLLECTION" };
+    setLinked((current) => [
+      item,
+      ...(current ?? []).filter((existing) => existing.id !== tool.id),
+    ]);
+    setCreatingTool(false);
+    setReload((current) => current + 1);
+  }
+
+  function deletedOwned(id: string) {
+    setLinked((current) => current?.filter((tool) => tool.id !== id) ?? null);
+    setReload((current) => current + 1);
+  }
 
   function select(id: string) {
     setSelectedId(id);
@@ -439,9 +492,16 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
                     <p role="status">Loading collection tools...</p>
                   ) : (
                     <>
+                      <Button
+                        className="w-fit"
+                        disabled={busy || categories.length === 0}
+                        onClick={() => setCreatingTool(true)}
+                      >
+                        Create New Tool
+                      </Button>
                       <div className="grid gap-2">
                         <Label htmlFor="collection-tool">
-                          Add an existing tool
+                          Add Existing Tool
                         </Label>
                         <div className="flex gap-2">
                           <Select
@@ -473,7 +533,7 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
                               if (toolId) changeLink(toolId, false);
                             }}
                           >
-                            Add tool
+                            Add Existing Tool
                           </Button>
                         </div>
                         {available.length === 0 && (
@@ -493,46 +553,64 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
                         </p>
                       ) : (
                         <ul className="grid gap-3">
-                          {linked.map((tool) => (
-                            <li
-                              key={tool.id}
-                              className="flex items-center justify-between gap-3 rounded-lg border p-3"
-                            >
-                              <div className="min-w-0">
-                                {tool.websiteUrl &&
-                                /^https?:\/\//i.test(tool.websiteUrl) ? (
-                                  <a
-                                    href={tool.websiteUrl}
-                                    className="break-words font-medium text-indigo-600 hover:underline"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    {tool.name}
-                                  </a>
-                                ) : (
-                                  <p className="break-words font-medium">
-                                    {tool.name}
-                                  </p>
-                                )}
-                                <p className="text-sm text-slate-500">
-                                  {tool.category.name} ·{" "}
-                                  {tool.accessType === "FREE"
-                                    ? "Free"
-                                    : tool.accessType === "LICENSED"
-                                      ? "Licensed"
-                                      : "Subscription"}
+                          {linked.map((tool) =>
+                            tool.ownership === "COLLECTION" ? (
+                              <li key={tool.id}>
+                                <p className="mb-2 text-xs font-medium text-slate-500">
+                                  Collection-owned tool
                                 </p>
-                              </div>
-                              <Button
-                                variant="outline"
-                                disabled={busy}
-                                aria-label={`Remove ${tool.name} from collection`}
-                                onClick={() => changeLink(tool.id, true)}
+                                <ToolCard
+                                  tool={tool}
+                                  collectionId={selected.id}
+                                  categories={categories}
+                                  departmentCatalog={departmentCatalog}
+                                  onRetryDepartments={refreshDepartments}
+                                  onUpdated={savedOwned}
+                                  onDeleted={deletedOwned}
+                                  disabled={busy}
+                                />
+                              </li>
+                            ) : (
+                              <li
+                                key={tool.id}
+                                className="flex items-center justify-between gap-3 rounded-lg border p-3"
                               >
-                                Remove
-                              </Button>
-                            </li>
-                          ))}
+                                <div className="min-w-0">
+                                  {tool.websiteUrl &&
+                                  /^https?:\/\//i.test(tool.websiteUrl) ? (
+                                    <a
+                                      href={tool.websiteUrl}
+                                      className="break-words font-medium text-indigo-600 hover:underline"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {tool.name}
+                                    </a>
+                                  ) : (
+                                    <p className="break-words font-medium">
+                                      {tool.name}
+                                    </p>
+                                  )}
+                                  <p className="text-sm text-slate-500">
+                                    {tool.category.name} ·{" "}
+                                    {tool.accessType === "FREE"
+                                      ? "Free"
+                                      : tool.accessType === "LICENSED"
+                                        ? "Licensed"
+                                        : "Subscription"}
+                                  </p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  disabled={busy}
+                                  aria-label={`Remove ${tool.name} from collection`}
+                                  onClick={() => changeLink(tool.id, true)}
+                                >
+                                  Remove from Collection
+                                </Button>
+                              </li>
+                            ),
+                          )}
                         </ul>
                       )}
                     </>
@@ -547,6 +625,16 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
           </div>
         )}
       </div>
+      {creatingTool && selected && (
+        <AddToolModal
+          collectionId={selected.id}
+          categories={categories}
+          departmentCatalog={departmentCatalog}
+          onRetryDepartments={refreshDepartments}
+          onSaved={savedOwned}
+          onClose={() => setCreatingTool(false)}
+        />
+      )}
       <Dialog
         open={dialog !== null}
         onOpenChange={(open) => {
@@ -567,7 +655,7 @@ function CollectionWorkspace({ explore }: { explore: boolean }) {
             </DialogTitle>
             <DialogDescription>
               {dialog === "delete"
-                ? `Delete “${selected?.name}” and all its tool links? Contributors’ original saved tools will remain in My Tools.`
+                ? `Delete “${selected?.name}” and its collection-owned tools permanently? Linked personal tools will remain in My Tools.`
                 : "Give your collection a name and optional description."}
             </DialogDescription>
           </DialogHeader>

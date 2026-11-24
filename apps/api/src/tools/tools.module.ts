@@ -7,7 +7,7 @@ import { CategoriesController } from './categories.controller.js';
 import { TagsController } from './tags.controller.js';
 import { ToolsController } from './tools.controller.js';
 import { ToolsService } from './tools.service.js';
-import { LinksModule } from '../links/links.module.js';
+import { LinksModule } from '../links/index.js';
 
 @Module({
   imports: [PrismaModule, LinksModule],

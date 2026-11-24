@@ -40,8 +40,9 @@ model Category {
 model Tool {
   id          String     @id @default(uuid()) @db.Uuid
 
-  //Scaler ID no FK
-  userId      String
+  // Exactly one business owner; both identifiers are scalar (no cross-module FK).
+  userId       String?
+  collectionId String? @db.Uuid
 
   name        String
   description String?
@@ -60,6 +61,7 @@ model Tool {
   @@index([userId, accessType])
   @@index([userId, categoryId])
   @@index([userId, updatedAt])
+  @@index([collectionId])
 
   @@map("tools")
 }

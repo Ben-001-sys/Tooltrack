@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Create tools directly inside collections using the existing Tool model, categories, department tags and two-step form. Owned tools stay outside personal inventories and do not depend on their contributor's account.
+- Permit authenticated collaborators to view/edit/delete public collection-owned tools, keep private tools owner-only, and preserve owner-only visibility changes and personal-link privacy.
+- Combine owned and linked tools in collection lists/counts. Atomically remove owned tools, their tag assignments and collection links on collection deletion, preserving linked personal tools and shared metadata.
+- Add a non-destructive ownership migration and PostgreSQL exactly-one-owner CHECK, plus populated-schema, authorization, privacy, rollback and row-lock regression tests.
+- Correct architecture import checks to scan real module directories and enforce explicit public service entry points. Keep production migration, backup and approval safeguards unchanged.
+
 ## [0.1.4]
 
 - Allow a one-release, explicitly approved no-backup upgrade of an existing production environment only for v0.1.4; require exact risk acknowledgement and prior successful deployment, preserve release/source protections, and record the absence of verified backup evidence.

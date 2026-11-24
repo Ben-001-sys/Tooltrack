@@ -6,14 +6,15 @@ import {
   Header,
   HttpCode,
   Param,
+  Patch,
   ParseUUIDPipe,
   Post,
   ValidationPipe,
 } from '@nestjs/common';
 import { Session, type UserSession } from '@thallesp/nestjs-better-auth';
 import { IsUUID } from 'class-validator';
-import { CollectionsService } from '../collections/collections.service.js';
-import { ToolsService } from '../tools/tools.service.js';
+import { CollectionsService } from '../collections/index.js';
+import { CreateToolDto, UpdateToolDto, ToolsService } from '../tools/index.js';
 import { PrismaService } from '../prisma/index.js';
 import { LinksService } from './links.service.js';
 
@@ -58,11 +59,19 @@ export class LinksController {
         publicOnly,
       );
       const links = await this.links.forCollection(id, tx);
+      const collectionOwned = await this.tools.findOwnedForCollection(id, tx);
       if (collection.visibility === 'PUBLIC') {
-        return this.tools.findCollectionToolSummaries(
+        const personal = await this.tools.findCollectionToolSummaries(
           links.map((link) => link.toolId),
           tx,
         );
+        return [
+          ...collectionOwned,
+          ...personal.map((tool) => ({
+            ...tool,
+            ownership: 'PERSONAL_LINK' as const,
+          })),
+        ];
       }
 
       const owned = await this.tools.findManyByIds(
@@ -80,7 +89,64 @@ export class LinksController {
           .map((link) => link.toolId),
         tx,
       );
-      return [...owned, ...contributed];
+      return [
+        ...collectionOwned,
+        ...[...owned, ...contributed].map((tool) => ({
+          ...tool,
+          ownership: 'PERSONAL_LINK' as const,
+        })),
+      ];
+    });
+  }
+
+  @Get('collections/:id/owned-tools/:toolId')
+  @Header('Cache-Control', 'private, no-store')
+  findOwned(
+    @Session() session: UserSession,
+    @Param('id', uuid) id: string,
+    @Param('toolId', uuid) toolId: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.collections.findOne(session.user.id, id, tx);
+      return this.tools.findOwnedOne(id, toolId, tx);
+    });
+  }
+
+  @Post('collections/:id/owned-tools')
+  createOwned(
+    @Session() session: UserSession,
+    @Param('id', uuid) id: string,
+    @Body(body) dto: CreateToolDto,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.collections.findOne(session.user.id, id, tx);
+      return this.tools.createForCollection(id, dto, tx);
+    });
+  }
+
+  @Patch('collections/:id/owned-tools/:toolId')
+  updateOwned(
+    @Session() session: UserSession,
+    @Param('id', uuid) id: string,
+    @Param('toolId', uuid) toolId: string,
+    @Body(body) dto: UpdateToolDto,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.collections.findOne(session.user.id, id, tx);
+      return this.tools.updateForCollection(id, toolId, dto, tx);
+    });
+  }
+
+  @Delete('collections/:id/owned-tools/:toolId')
+  @HttpCode(204)
+  async removeOwned(
+    @Session() session: UserSession,
+    @Param('id', uuid) id: string,
+    @Param('toolId', uuid) toolId: string,
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      await this.collections.findOne(session.user.id, id, tx);
+      await this.tools.removeOwned(id, toolId, tx);
     });
   }
 

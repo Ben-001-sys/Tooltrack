@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { dirname, relative, resolve, sep } from 'node:path';
 
 const schema = readFileSync('apps/api/prisma/schema.prisma', 'utf8');
 // Extend deliberately when adding a business module.
@@ -24,19 +25,23 @@ for (const [, model, body] of schema.matchAll(/model\s+(\w+)\s*\{([^}]+)\}/g)) {
     assert.equal(ownership[target], ownership[model], `Cross-module relationship ${model} -> ${target}`);
   }
 }
-const root = 'apps/api/src/modules';
+const root = resolve('apps/api/src');
+const modules = new Set(Object.values(ownership));
 function scan(directory, owner) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const file = `${directory}/${entry.name}`;
     if (entry.isDirectory()) scan(file, owner);
     else if (entry.name.endsWith('.ts')) {
       for (const [, specifier] of readFileSync(file, 'utf8').matchAll(/from\s+['"]([^'"]+)['"]/g)) {
-        const match = specifier.match(/(?:modules\/|\.\.\/)([^/]+)\/(.+)/);
-        if (match && match[1] !== owner) assert.match(match[2], /^(index|public)\./, `Private cross-module import in ${file}`);
+        if (!specifier.startsWith('.')) continue;
+        const [target, ...parts] = relative(root, resolve(dirname(file), specifier)).split(sep);
+        if (modules.has(target) && target !== owner) {
+          assert.ok(parts.length === 1 && /^(index|public)\.js$/.test(parts[0]), `Private cross-module import in ${file}: ${specifier}`);
+        }
       }
     }
   }
 }
-try { for (const module of readdirSync(root)) scan(`${root}/${module}`, module); }
-catch (error) { if (error.code !== 'ENOENT') throw error; }
+// Missing real module directories are errors; never silently skip boundary checking.
+for (const module of modules) scan(`${root}/${module}`, module);
 console.log('PASS current schema ownership and module import rules');

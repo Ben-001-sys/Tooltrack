@@ -5,7 +5,8 @@ import {
 } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/index.js';
-import { LinksService } from '../links/links.service.js';
+import { LinksService } from '../links/index.js';
+import { ToolsService } from '../tools/index.js';
 import type { CollectionDto } from './collection.dto.js';
 
 @Injectable()
@@ -13,32 +14,33 @@ export class CollectionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly links: LinksService,
+    private readonly tools: ToolsService,
   ) {}
 
   list(userId: string) {
-    return this.prisma.collection.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.listWhere({ userId });
   }
 
   listPublic() {
+    return this.listWhere({ visibility: 'PUBLIC' });
+  }
+
+  private listWhere(where: Prisma.CollectionWhereInput) {
     return this.prisma.$transaction(
       async (tx) => {
         const collections = await tx.collection.findMany({
-          where: { visibility: 'PUBLIC' },
+          where,
           orderBy: { createdAt: 'desc' },
         });
-        const counts = await this.links.countForCollections(
-          collections.map(({ id }) => id),
-          tx,
-        );
+        const ids = collections.map(({ id }) => id);
+        const linked = await this.links.countForCollections(ids, tx);
+        const owned = await this.tools.countForCollections(ids, tx);
         return collections.map((collection) => ({
           ...collection,
-          toolCount: counts.get(collection.id) ?? 0,
+          toolCount:
+            (linked.get(collection.id) ?? 0) + (owned.get(collection.id) ?? 0),
         }));
       },
-      // Read visibility and link counts from the same snapshot.
       { isolationLevel: 'RepeatableRead' },
     );
   }
@@ -112,6 +114,7 @@ export class CollectionsService {
         where: { id, ...this.accessibleBy(userId) },
       });
       if (!result.count) throw new NotFoundException('Collection not found.');
+      await this.tools.removeForCollection(id, tx);
       await this.links.removeForCollection(id, tx);
     });
   }

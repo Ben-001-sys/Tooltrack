@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/index.js';
 import type { CreateToolDto } from './dto/create-tool.dto.js';
 import type { UpdateToolDto } from './dto/update-tool.dto.js';
 import { Prisma } from '../generated/prisma/client.js';
-import { LinksService } from '../links/links.service.js';
+import { LinksService } from '../links/index.js';
 
 const include = {
   category: { select: { id: true, name: true, slug: true } },
@@ -71,20 +71,43 @@ export class ToolsService {
     });
   }
 
-  async create(userId: string, dto: CreateToolDto) {
+  create(userId: string, dto: CreateToolDto) {
+    return this.createTool({ userId, collectionId: null }, dto, this.prisma);
+  }
+
+  async createForCollection(
+    collectionId: string,
+    dto: CreateToolDto,
+    tx: Prisma.TransactionClient,
+  ) {
+    return this.presentOwned(
+      await this.createTool({ userId: null, collectionId }, dto, tx),
+    );
+  }
+
+  private async createTool(
+    owner:
+      | { userId: string; collectionId: null }
+      | { userId: null; collectionId: string },
+    dto: CreateToolDto,
+    db: Prisma.TransactionClient,
+  ) {
+    if (Boolean(owner.userId) === Boolean(owner.collectionId)) {
+      throw new BadRequestException('A tool must have exactly one owner.');
+    }
     const name = dto.name.trim();
 
     if (!name) {
       throw new BadRequestException('Tool name cannot be empty.');
     }
 
-    await this.checkCategory(dto.categoryId);
-    await this.checkTags(dto.tagIds ?? [], this.prisma);
+    await this.checkCategory(dto.categoryId, db);
+    await this.checkTags(dto.tagIds ?? [], db);
 
     try {
-      const tool = await this.prisma.tool.create({
+      const tool = await db.tool.create({
         data: {
-          userId,
+          ...owner,
           name,
           description: dto.description?.trim() || null,
           websiteUrl: dto.websiteUrl?.trim() || null,
@@ -129,7 +152,7 @@ export class ToolsService {
     tx: Prisma.TransactionClient,
   ) {
     const tools = await tx.tool.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, userId: { not: null }, collectionId: null },
       select: {
         id: true,
         name: true,
@@ -156,14 +179,36 @@ export class ToolsService {
     return withTags(tool);
   }
 
-  async update(userId: string, id: string, dto: UpdateToolDto) {
+  update(userId: string, id: string, dto: UpdateToolDto) {
+    return this.updateTool({ id, userId }, dto);
+  }
+
+  async updateForCollection(
+    collectionId: string,
+    id: string,
+    dto: UpdateToolDto,
+    tx: Prisma.TransactionClient,
+  ) {
+    return this.presentOwned(
+      await this.updateTool({ id, collectionId, userId: null }, dto, tx),
+    );
+  }
+
+  private async updateTool(
+    where: Prisma.ToolWhereUniqueInput,
+    dto: UpdateToolDto,
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? this.prisma;
+    const id = where.id;
+    if (!id) throw new NotFoundException('Tool not found.');
     if (dto.name !== undefined && !dto.name.trim())
       throw new BadRequestException('Tool name cannot be empty.');
     if (dto.categoryId !== undefined) {
-      await this.findOne(userId, id);
-      await this.checkCategory(dto.categoryId);
+      if (!(await db.tool.findFirst({ where, select: { id: true } })))
+        throw new NotFoundException('Tool not found.');
+      await this.checkCategory(dto.categoryId, db);
     }
-    const where = { id, userId };
     const data = {
       name: dto.name?.trim(),
       description:
@@ -181,10 +226,10 @@ export class ToolsService {
     try {
       if (tagIds === undefined) {
         return withTags(
-          await this.prisma.tool.update({ where, data, include: ownerInclude }),
+          await db.tool.update({ where, data, include: ownerInclude }),
         );
       }
-      return await this.prisma.$transaction(async (tx) => {
+      const replaceTags = async (tx: Prisma.TransactionClient) => {
         // The parent update serializes concurrent replacements and checks ownership.
         await tx.tool.update({
           where,
@@ -203,7 +248,10 @@ export class ToolsService {
             include: ownerInclude,
           }),
         );
-      });
+      };
+      return tx
+        ? await replaceTags(tx)
+        : await this.prisma.$transaction(replaceTags);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2025')
@@ -221,9 +269,74 @@ export class ToolsService {
     });
   }
 
-  private async checkCategory(id: string) {
+  async findOwnedOne(
+    collectionId: string,
+    id: string,
+    tx: Prisma.TransactionClient,
+  ) {
+    const tool = await tx.tool.findFirst({
+      where: { id, collectionId, userId: null },
+      include: ownerInclude,
+    });
+    if (!tool) throw new NotFoundException('Tool not found.');
+    return this.presentOwned(withTags(tool));
+  }
+
+  async findOwnedForCollection(
+    collectionId: string,
+    tx: Prisma.TransactionClient,
+  ) {
+    const tools = await tx.tool.findMany({
+      where: { collectionId, userId: null },
+      include: ownerInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+    return tools.map((tool) => this.presentOwned(withTags(tool)));
+  }
+
+  async countForCollections(
+    collectionIds: string[],
+    tx: Prisma.TransactionClient,
+  ) {
+    const counts = await tx.tool.groupBy({
+      by: ['collectionId'],
+      where: { collectionId: { in: collectionIds } },
+      _count: { _all: true },
+    });
+    return new Map(counts.map((item) => [item.collectionId, item._count._all]));
+  }
+
+  async removeOwned(
+    collectionId: string,
+    id: string,
+    tx: Prisma.TransactionClient,
+  ) {
+    const result = await tx.tool.deleteMany({
+      where: { id, collectionId, userId: null },
+    });
+    if (!result.count) throw new NotFoundException('Tool not found.');
+    await this.links.removeForTool(id, tx);
+  }
+
+  removeForCollection(collectionId: string, tx: Prisma.TransactionClient) {
+    // ToolTag is internal to Tools and cascades on deletion; shared tags/categories remain.
+    return tx.tool.deleteMany({ where: { collectionId, userId: null } });
+  }
+
+  private presentOwned(tool: ReturnType<typeof withTags>) {
+    return {
+      ...tool,
+      websiteUrl: collectionWebsite(tool.websiteUrl),
+      ownership: 'COLLECTION' as const,
+    };
+  }
+
+  private async checkCategory(
+    id: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ) {
     if (
-      !(await this.prisma.category.findUnique({
+      !(await db.category.findUnique({
         where: { id },
         select: { id: true },
       }))
